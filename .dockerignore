@@ -1,0 +1,9 @@
+.git
+.claude
+.gitignore
+.env
+*.bak
+*.md
+sql
+Dockerfile
+render.yaml

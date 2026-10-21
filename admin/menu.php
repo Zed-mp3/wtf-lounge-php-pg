@@ -1,0 +1,344 @@
+<?php
+require_once __DIR__ . '/../includes/auth.php';
+configureSession();
+require_once __DIR__ . '/../config/db.php';
+require_once __DIR__ . '/../includes/functions.php';
+
+requireAdmin();
+
+// Handle form submissions
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrfVerify();
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'add_product') {
+        $productname = mb_substr(trim((string) ($_POST['productname'] ?? '')), 0, 255);
+        $category_id = (int) ($_POST['category_id'] ?? 0);
+        $price = (float) ($_POST['price'] ?? 0);
+        $stock = min(100000, max(0, (int) ($_POST['stock'] ?? 0)));
+        $image = trim((string) ($_POST['image'] ?? ''));
+        if ($image !== '' && (!preg_match('#^https?://#i', $image) || !filter_var($image, FILTER_VALIDATE_URL) || strlen($image) > 500)) {
+            $image = '';
+        }
+        $default_meta = mb_substr(trim((string) ($_POST['default_meta'] ?? '')), 0, 255);
+        $is_active = isset($_POST['is_active']) ? 'true' : 'false';
+
+        if ($productname && $category_id > 0 && $price > 0 && $price <= 100000) {
+            try {
+                $stmt = $pdo->prepare(
+                    'INSERT INTO products (productname, category_id, price, image, stock, default_meta, is_active) 
+                     VALUES (?, ?, ?, ?, ?, ?, ?)'
+                );
+                $stmt->execute([$productname, $category_id, $price, $image, $stock, $default_meta, $is_active]);
+                flashSet('Product "' . $productname . '" added successfully!');
+            } catch (Exception $e) {
+                error_log('menu admin error: ' . $e->getMessage());
+                flashSet('Could not add that product. Please try again.');
+            }
+        } else {
+            flashSet('Please fill in all required fields.');
+        }
+        header('Location: menu.php');
+        exit;
+    }
+
+    if ($action === 'edit_product') {
+        $product_id = (int) ($_POST['product_id'] ?? 0);
+        $productname = mb_substr(trim((string) ($_POST['productname'] ?? '')), 0, 255);
+        $category_id = (int) ($_POST['category_id'] ?? 0);
+        $price = (float) ($_POST['price'] ?? 0);
+        $stock = min(100000, max(0, (int) ($_POST['stock'] ?? 0)));
+        $image = trim((string) ($_POST['image'] ?? ''));
+        if ($image !== '' && (!preg_match('#^https?://#i', $image) || !filter_var($image, FILTER_VALIDATE_URL) || strlen($image) > 500)) {
+            $image = '';
+        }
+        $default_meta = mb_substr(trim((string) ($_POST['default_meta'] ?? '')), 0, 255);
+        $is_active = isset($_POST['is_active']) ? 'true' : 'false';
+
+        if ($product_id > 0 && $productname && $category_id > 0 && $price > 0 && $price <= 100000) {
+            try {
+                $stmt = $pdo->prepare(
+                    'UPDATE products 
+                     SET productname = ?, category_id = ?, price = ?, image = ?, stock = ?, default_meta = ?, is_active = ?
+                     WHERE product_id = ?'
+                );
+                $stmt->execute([$productname, $category_id, $price, $image, $stock, $default_meta, $is_active, $product_id]);
+                flashSet('Product updated successfully!');
+            } catch (Exception $e) {
+                error_log('menu admin error: ' . $e->getMessage());
+                flashSet('Could not update that product. Please try again.');
+            }
+        } else {
+            flashSet('Please fill in all required fields.');
+        }
+        header('Location: menu.php');
+        exit;
+    }
+
+    if ($action === 'delete_product') {
+        $product_id = (int) ($_POST['product_id'] ?? 0);
+        if ($product_id > 0) {
+            try {
+                $stmt = $pdo->prepare('DELETE FROM products WHERE product_id = ?');
+                $stmt->execute([$product_id]);
+                error_log(sprintf('AUDIT admin=%d delete_product=%d ip=%s', currentUserId(), $product_id, clientIp()));
+                flashSet('Product deleted successfully.');
+            } catch (Exception $e) {
+                error_log('menu admin error: ' . $e->getMessage());
+                flashSet('Could not delete that product. Please try again.');
+            }
+        }
+        header('Location: menu.php');
+        exit;
+    }
+
+    if ($action === 'add_category') {
+        $categoryname = mb_substr(trim((string) ($_POST['categoryname'] ?? '')), 0, 100);
+        if ($categoryname) {
+            try {
+                $stmt = $pdo->prepare('INSERT INTO categories (categoryname) VALUES (?)');
+                $stmt->execute([$categoryname]);
+                flashSet('Category "' . $categoryname . '" added successfully!');
+            } catch (Exception $e) {
+                error_log('menu admin error: ' . $e->getMessage());
+                flashSet('Could not add that category. Please try again.');
+            }
+        } else {
+            flashSet('Category name is required.');
+        }
+        header('Location: menu.php');
+        exit;
+    }
+
+    if ($action === 'delete_category') {
+        $category_id = (int) ($_POST['category_id'] ?? 0);
+        if ($category_id > 0) {
+            try {
+                // Check if category has products
+                $stmt = $pdo->prepare('SELECT COUNT(*) FROM products WHERE category_id = ?');
+                $stmt->execute([$category_id]);
+                $count = $stmt->fetchColumn();
+                
+                if ($count > 0) {
+                    flashSet('Cannot delete category with existing products. Move or delete products first.');
+                } else {
+                    $stmt = $pdo->prepare('DELETE FROM categories WHERE category_id = ?');
+                    $stmt->execute([$category_id]);
+                    flashSet('Category deleted successfully.');
+                }
+            } catch (Exception $e) {
+                error_log('menu admin error: ' . $e->getMessage());
+                flashSet('Could not delete that category. Please try again.');
+            }
+        }
+        header('Location: menu.php');
+        exit;
+    }
+}
+
+// Get data
+$categories = getCategories($pdo);
+$products = getProducts($pdo, null, null);
+$editProduct = null;
+$editProductID = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
+
+if ($editProductID > 0) {
+    $stmt = $pdo->prepare('SELECT * FROM products WHERE product_id = ?');
+    $stmt->execute([$editProductID]);
+    $editProduct = $stmt->fetch();
+}
+
+$pageTitle = 'Manage Menu — WTF Lounge Admin';
+$activeAdminNav = 'menu';
+require __DIR__ . '/includes/admin_header.php';
+?>
+
+<h1 class="headline-lg">Manage Menu</h1>
+<p class="body-md">Add, edit, or remove products and categories.</p>
+
+<!-- Add/Edit Product Form -->
+<div class="admin-welcome" style="flex-direction:column; align-items:stretch;">
+    <h2 style="font-family:'Plus Jakarta Sans',sans-serif; font-weight:700; font-size:18px; margin:0 0 12px;">
+        <?= $editProduct ? 'Edit Product' : 'Add New Product' ?>
+    </h2>
+    <form method="post" action="menu.php" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <?= csrfField() ?>
+        <?php if ($editProduct): ?>
+            <input type="hidden" name="action" value="edit_product">
+            <input type="hidden" name="product_id" value="<?= (int) $editProduct['product_id'] ?>">
+        <?php else: ?>
+            <input type="hidden" name="action" value="add_product">
+        <?php endif; ?>
+        
+        <div class="field" style="margin:0;">
+            <label>Product Name</label>
+            <input type="text" name="productname" required 
+                   value="<?= $editProduct ? h($editProduct['productname']) : '' ?>">
+        </div>
+        
+        <div class="field" style="margin:0;">
+            <label>Category</label>
+            <select name="category_id" required>
+                <option value="">Select Category</option>
+                <?php foreach ($categories as $cat): ?>
+                    <option value="<?= (int) $cat['category_id'] ?>" 
+                        <?= $editProduct && $editProduct['category_id'] == $cat['category_id'] ? 'selected' : '' ?>>
+                        <?= h($cat['categoryname']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        
+        <div class="field" style="margin:0;">
+            <label>Price ($)</label>
+            <input type="number" step="0.01" name="price" required 
+                   value="<?= $editProduct ? h((string) $editProduct['price']) : '' ?>">
+        </div>
+        
+        <div class="field" style="margin:0;">
+            <label>Stock on Hand</label>
+            <input type="number" step="1" min="0" name="stock" required
+                   value="<?= $editProduct ? (int) $editProduct['stock'] : 0 ?>">
+        </div>
+
+        <div class="field" style="margin:0;">
+            <label>Image URL</label>
+            <input type="url" name="image" 
+                   value="<?= $editProduct ? h($editProduct['image']) : '' ?>"
+                   placeholder="https://images.unsplash.com/...">
+        </div>
+        
+        <div class="field" style="margin:0; grid-column: span 2;">
+            <label>Default Meta (e.g., Iced, Oat Milk)</label>
+            <input type="text" name="default_meta" 
+                   value="<?= $editProduct ? h($editProduct['default_meta']) : '' ?>">
+        </div>
+        
+        <div class="field" style="margin:0; grid-column: span 2; display:flex; align-items:center; gap:10px;">
+            <label style="margin:0; display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" name="is_active" value="1" 
+                       <?= $editProduct && $editProduct['is_active'] ? 'checked' : (!$editProduct ? 'checked' : '') ?>>
+                Active (visible on menu)
+            </label>
+        </div>
+        
+        <div style="grid-column: span 2; display:flex; gap:10px;">
+            <button type="submit" class="btn btn--primary">
+                <?= $editProduct ? 'Update Product' : 'Add Product' ?>
+            </button>
+            <?php if ($editProduct): ?>
+                <a href="menu.php" class="btn btn--secondary">Cancel Edit</a>
+            <?php endif; ?>
+        </div>
+    </form>
+</div>
+
+<!-- Add Category -->
+<div class="admin-welcome" style="flex-direction:column; align-items:stretch; margin-top:16px;">
+    <h2 style="font-family:'Plus Jakarta Sans',sans-serif; font-weight:700; font-size:18px; margin:0 0 12px;">Add Category</h2>
+    <form method="post" action="menu.php" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <?= csrfField() ?>
+        <input type="hidden" name="action" value="add_category">
+        <input type="text" name="categoryname" placeholder="New category name" required style="flex:1; min-width:200px; padding:10px 16px; border:2px solid var(--outline-variant); border-radius:var(--radius-full); background:var(--surface-container-lowest);">
+        <button type="submit" class="btn btn--secondary">Add Category</button>
+    </form>
+</div>
+
+<!-- Products Table -->
+<h2 class="panel__title" style="margin-top:24px; margin-bottom:16px;">All Products</h2>
+<div class="table-scroll">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Product</th>
+                <th>Category</th>
+                <th>Price</th>
+                <th>Stock</th>
+                <th>Meta</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($products as $p): ?>
+                <tr>
+                    <td><?= (int) $p['product_id'] ?></td>
+                    <td>
+                        <strong><?= h($p['productname']) ?></strong>
+                        <?php if ($p['image']): ?>
+                            <br><small><a href="<?= h($p['image']) ?>" target="_blank">View image</a></small>
+                        <?php endif; ?>
+                    </td>
+                    <td><?= h($p['categoryname'] ?? 'Uncategorized') ?></td>
+                    <td><strong><?= formatPrice($p['price']) ?></strong></td>
+                    <td>
+                        <?php $st = stockStatus((int) $p['stock']); ?>
+                        <span class="status-badge <?= $st === 'out' ? 'status-badge--cancelled' : ($st === 'low' ? 'status-badge--active' : 'status-badge--completed') ?>">
+                            <?= (int) $p['stock'] ?><?= $st === 'out' ? ' — Out' : ($st === 'low' ? ' — Low' : '') ?>
+                        </span>
+                    </td>
+                    <td><small><?= h($p['default_meta']) ?></small></td>
+                    <td>
+                        <span class="status-badge <?= $p['is_active'] ? 'status-badge--completed' : 'status-badge--cancelled' ?>">
+                            <?= $p['is_active'] ? 'Active' : 'Inactive' ?>
+                        </span>
+                    </td>
+                    <td>
+                        <div class="admin-actions">
+                            <a href="menu.php?edit=<?= (int) $p['product_id'] ?>" class="btn btn--secondary" style="padding:4px 12px; font-size:11px;">Edit</a>
+                            <form method="post" action="menu.php" style="display:inline;">
+                                <?= csrfField() ?>
+                                <input type="hidden" name="action" value="delete_product">
+                                <input type="hidden" name="product_id" value="<?= (int) $p['product_id'] ?>">
+                                <button type="submit" data-confirm="Delete this product?" style="padding:4px 12px; border:1px solid var(--error); border-radius:var(--radius-sm); background:var(--error-container); color:var(--error); cursor:pointer; font-size:11px; font-weight:600;">
+                                    Delete
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            <?php if (empty($products)): ?>
+                <tr><td colspan="8" style="text-align:center;padding:40px;">No products found.</td></tr>
+            <?php endif; ?>
+        </tbody>
+    </table>
+</div>
+
+<!-- Categories Table -->
+<h2 class="panel__title" style="margin-top:24px; margin-bottom:16px;">Categories</h2>
+<div class="table-scroll">
+    <table class="admin-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Category Name</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($categories as $cat): ?>
+                <tr>
+                    <td><?= (int) $cat['category_id'] ?></td>
+                    <td><strong><?= h($cat['categoryname']) ?></strong></td>
+                    <td>
+                        <form method="post" action="menu.php" style="display:inline;">
+                            <?= csrfField() ?>
+                            <input type="hidden" name="action" value="delete_category">
+                            <input type="hidden" name="category_id" value="<?= (int) $cat['category_id'] ?>">
+                            <button type="submit" data-confirm="Delete this category?" style="padding:4px 12px; border:1px solid var(--error); border-radius:var(--radius-sm); background:var(--error-container); color:var(--error); cursor:pointer; font-size:11px; font-weight:600;">
+                                Delete
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            <?php if (empty($categories)): ?>
+                <tr><td colspan="3" style="text-align:center;padding:40px;">No categories found.</td></tr>
+            <?php endif; ?>
+        </tbody>
+    </table>
+</div>
+
+<?php require __DIR__ . '/includes/admin_footer.php'; ?>
