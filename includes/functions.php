@@ -24,7 +24,7 @@ function stockStatus(int $stock): string
 
 function formatPrice(float $n): string
 {
-    return '$' . number_format($n, 2);
+    return '₱' . number_format($n, 2);
 }
 
 function h(?string $s): string
