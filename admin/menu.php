@@ -6,6 +6,47 @@ require_once __DIR__ . '/../includes/functions.php';
 
 requireAdmin();
 
+function saveProductImageUpload(): ?string
+{
+    if (!isset($_FILES['image_upload']) || $_FILES['image_upload']['error'] === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
+    $upload = $_FILES['image_upload'];
+    if ($upload['error'] !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Image upload failed. Please try again.');
+    }
+
+    if ($upload['size'] > 5 * 1024 * 1024 || !is_uploaded_file($upload['tmp_name'])) {
+        throw new RuntimeException('Choose a valid image that is no larger than 5 MB.');
+    }
+
+    $imageTypes = [
+        'image/jpeg' => 'jpg',
+        'image/png' => 'png',
+        'image/gif' => 'gif',
+        'image/webp' => 'webp',
+    ];
+    $fileInfo = new finfo(FILEINFO_MIME_TYPE);
+    $mimeType = $fileInfo->file($upload['tmp_name']);
+
+    if (!isset($imageTypes[$mimeType])) {
+        throw new RuntimeException('Upload a JPG, PNG, GIF, or WebP image.');
+    }
+
+    $uploadDirectory = __DIR__ . '/../uploads/products';
+    if (!is_dir($uploadDirectory) && !mkdir($uploadDirectory, 0755, true) && !is_dir($uploadDirectory)) {
+        throw new RuntimeException('Could not create the product image upload directory.');
+    }
+
+    $fileName = bin2hex(random_bytes(16)) . '.' . $imageTypes[$mimeType];
+    if (!move_uploaded_file($upload['tmp_name'], $uploadDirectory . '/' . $fileName)) {
+        throw new RuntimeException('Could not save the uploaded image.');
+    }
+
+    return 'uploads/products/' . $fileName;
+}
+
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfVerify();
@@ -22,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($productname && $category_id > 0 && $price > 0) {
             try {
+                $image = saveProductImageUpload() ?? $image;
                 $stmt = $pdo->prepare(
                     'INSERT INTO products (productname, category_id, price, image, stock, default_meta, is_active) 
                      VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -50,6 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($product_id > 0 && $productname && $category_id > 0 && $price > 0) {
             try {
+                $image = saveProductImageUpload() ?? $image;
                 $stmt = $pdo->prepare(
                     'UPDATE products 
                      SET productname = ?, category_id = ?, price = ?, image = ?, stock = ?, default_meta = ?, is_active = ?
@@ -149,7 +192,7 @@ require __DIR__ . '/includes/admin_header.php';
     <h2 style="font-family:'Plus Jakarta Sans',sans-serif; font-weight:700; font-size:18px; margin:0 0 12px;">
         <?= $editProduct ? 'Edit Product' : 'Add New Product' ?>
     </h2>
-    <form method="post" action="menu.php" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+    <form method="post" action="menu.php" enctype="multipart/form-data" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
         <?= csrfField() ?>
         <?php if ($editProduct): ?>
             <input type="hidden" name="action" value="edit_product">
@@ -194,6 +237,12 @@ require __DIR__ . '/includes/admin_header.php';
             <input type="url" name="image" 
                    value="<?= $editProduct ? h($editProduct['image']) : '' ?>"
                    placeholder="https://images.unsplash.com/...">
+        </div>
+
+        <div class="field" style="margin:0;">
+            <label>Or upload image from your computer</label>
+            <input type="file" name="image_upload" accept="image/jpeg,image/png,image/gif,image/webp">
+            <small>JPG, PNG, GIF, or WebP; max 5 MB. An uploaded image takes priority over the URL.</small>
         </div>
         
         <div class="field" style="margin:0; grid-column: span 2;">
