@@ -6,7 +6,12 @@ require_once __DIR__ . '/../includes/functions.php';
 
 requireAdmin();
 
-function saveProductImageUpload(): ?string
+/**
+ * Validates an uploaded product image and returns ['mime' => ..., 'tmp' => ...],
+ * or null when no file was chosen. Nothing is written to disk: the image is
+ * stored in the database (product_images table) so it survives Render restarts.
+ */
+function readProductImageUpload(): ?array
 {
     if (!isset($_FILES['image_upload']) || $_FILES['image_upload']['error'] === UPLOAD_ERR_NO_FILE) {
         return null;
@@ -14,37 +19,42 @@ function saveProductImageUpload(): ?string
 
     $upload = $_FILES['image_upload'];
     if ($upload['error'] !== UPLOAD_ERR_OK) {
-        throw new RuntimeException('Image upload failed. Please try again.');
+        throw new RuntimeException('Image upload failed (file may be too large). Please try a smaller image.');
     }
 
-    if ($upload['size'] > 5 * 1024 * 1024 || !is_uploaded_file($upload['tmp_name'])) {
-        throw new RuntimeException('Choose a valid image that is no larger than 5 MB.');
+    if ($upload['size'] > 2 * 1024 * 1024 || !is_uploaded_file($upload['tmp_name'])) {
+        throw new RuntimeException('Choose a valid image that is no larger than 2 MB.');
     }
 
-    $imageTypes = [
-        'image/jpeg' => 'jpg',
-        'image/png' => 'png',
-        'image/gif' => 'gif',
-        'image/webp' => 'webp',
-    ];
-    $fileInfo = new finfo(FILEINFO_MIME_TYPE);
-    $mimeType = $fileInfo->file($upload['tmp_name']);
-
-    if (!isset($imageTypes[$mimeType])) {
+    $allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    $mimeType = (new finfo(FILEINFO_MIME_TYPE))->file($upload['tmp_name']);
+    if (!in_array($mimeType, $allowed, true)) {
         throw new RuntimeException('Upload a JPG, PNG, GIF, or WebP image.');
     }
 
-    $uploadDirectory = __DIR__ . '/../uploads/products';
-    if (!is_dir($uploadDirectory) && !mkdir($uploadDirectory, 0755, true) && !is_dir($uploadDirectory)) {
-        throw new RuntimeException('Could not create the product image upload directory.');
-    }
+    return ['mime' => $mimeType, 'tmp' => $upload['tmp_name']];
+}
 
-    $fileName = bin2hex(random_bytes(16)) . '.' . $imageTypes[$mimeType];
-    if (!move_uploaded_file($upload['tmp_name'], $uploadDirectory . '/' . $fileName)) {
-        throw new RuntimeException('Could not save the uploaded image.');
+/** Inserts or replaces the image stored in the database for a product. */
+function saveProductImage(PDO $pdo, int $productId, array $img): void
+{
+    $fp = fopen($img['tmp'], 'rb');
+    if ($fp === false) {
+        throw new RuntimeException('Could not read the uploaded image.');
     }
-
-    return 'uploads/products/' . $fileName;
+    $stmt = $pdo->prepare(
+        'INSERT INTO product_images (product_id, mime_type, data, updated_at)
+         VALUES (:id, :mime, :data, CURRENT_TIMESTAMP)
+         ON CONFLICT (product_id) DO UPDATE
+           SET mime_type = EXCLUDED.mime_type,
+               data = EXCLUDED.data,
+               updated_at = CURRENT_TIMESTAMP'
+    );
+    $stmt->bindValue(':id', $productId, PDO::PARAM_INT);
+    $stmt->bindValue(':mime', $img['mime']);
+    $stmt->bindParam(':data', $fp, PDO::PARAM_LOB);
+    $stmt->execute();
+    fclose($fp);
 }
 
 // Handle form submissions
@@ -63,14 +73,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($productname && $category_id > 0 && $price > 0) {
             try {
-                $image = saveProductImageUpload() ?? $image;
+                $img = readProductImageUpload();
+                $pdo->beginTransaction();
                 $stmt = $pdo->prepare(
                     'INSERT INTO products (productname, category_id, price, image, stock, default_meta, is_active) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?)'
+                     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING product_id'
                 );
                 $stmt->execute([$productname, $category_id, $price, $image, $stock, $default_meta, $is_active]);
+                $newId = (int) $stmt->fetchColumn();
+                if ($img) {
+                    saveProductImage($pdo, $newId, $img);
+                }
+                $pdo->commit();
                 flashSet('Product "' . $productname . '" added successfully!');
             } catch (Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
                 flashSet('Error adding product: ' . $e->getMessage());
             }
         } else {
@@ -92,15 +111,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($product_id > 0 && $productname && $category_id > 0 && $price > 0) {
             try {
-                $image = saveProductImageUpload() ?? $image;
+                $img = readProductImageUpload();
+                $removeImage = isset($_POST['remove_uploaded_image']);
+                $pdo->beginTransaction();
                 $stmt = $pdo->prepare(
                     'UPDATE products 
                      SET productname = ?, category_id = ?, price = ?, image = ?, stock = ?, default_meta = ?, is_active = ?
                      WHERE product_id = ?'
                 );
                 $stmt->execute([$productname, $category_id, $price, $image, $stock, $default_meta, $is_active, $product_id]);
+                if ($img) {
+                    saveProductImage($pdo, $product_id, $img);
+                } elseif ($removeImage) {
+                    $pdo->prepare('DELETE FROM product_images WHERE product_id = ?')->execute([$product_id]);
+                }
+                $pdo->commit();
                 flashSet('Product updated successfully!');
             } catch (Exception $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
                 flashSet('Error updating product: ' . $e->getMessage());
             }
         } else {
@@ -174,7 +204,11 @@ $editProduct = null;
 $editProductID = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
 
 if ($editProductID > 0) {
-    $stmt = $pdo->prepare('SELECT * FROM products WHERE product_id = ?');
+    $stmt = $pdo->prepare(
+        'SELECT p.*,
+                EXISTS (SELECT 1 FROM product_images pi WHERE pi.product_id = p.product_id) AS has_image
+         FROM products p WHERE p.product_id = ?'
+    );
     $stmt->execute([$editProductID]);
     $editProduct = $stmt->fetch();
 }
@@ -242,7 +276,13 @@ require __DIR__ . '/includes/admin_header.php';
         <div class="field" style="margin:0;">
             <label>Or upload image from your computer</label>
             <input type="file" name="image_upload" accept="image/jpeg,image/png,image/gif,image/webp">
-            <small>JPG, PNG, GIF, or WebP; max 5 MB. An uploaded image takes priority over the URL.</small>
+            <small>JPG, PNG, GIF, or WebP; max 2 MB. Saved in the database. An uploaded image takes priority over the URL.</small>
+            <?php if ($editProduct && !empty($editProduct['has_image'])): ?>
+                <label style="margin:6px 0 0; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+                    <input type="checkbox" name="remove_uploaded_image" value="1">
+                    Remove the uploaded image (use the URL instead)
+                </label>
+            <?php endif; ?>
         </div>
         
         <div class="field" style="margin:0; grid-column: span 2;">
