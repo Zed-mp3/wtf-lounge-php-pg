@@ -178,7 +178,7 @@ require __DIR__ . '/includes/admin_header.php';
         </div>
         
         <div class="field" style="margin:0;">
-            <label>Price ($)</label>
+            <label>Price (₱)</label>
             <input type="number" step="0.01" name="price" required 
                    value="<?= $editProduct ? $editProduct['price'] : '' ?>">
         </div>
