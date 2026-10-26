@@ -46,6 +46,40 @@ function vineSvg(): string
          . '</svg>';
 }
 
+/* ---------- product images (stored in the product_images table) ----------
+ * Uploaded images live in the database so they survive Render restarts.
+ * Queries add has_image + image_ver, then attachProductImages() swaps the
+ * 'image' field for the product_image.php URL, so pages keep using
+ * $p['image'] exactly as before. Products without an upload keep their URL.
+ */
+
+/** SQL snippet: pass the products table alias/column, e.g. 'p.product_id'. */
+function imageColumnsSql(string $productIdColumn): string
+{
+    return "EXISTS (SELECT 1 FROM product_images pim WHERE pim.product_id = $productIdColumn) AS has_image,
+            (SELECT EXTRACT(EPOCH FROM pim.updated_at)::bigint FROM product_images pim WHERE pim.product_id = $productIdColumn) AS image_ver";
+}
+
+/** Relative URL to product_image.php (it lives in the same folder as the public pages). */
+function productImageUrl(int $product_id, $version = null): string
+{
+    $dir = basename(dirname($_SERVER['SCRIPT_NAME'] ?? ''));
+    $base = ($dir === 'admin') ? '../' : '';
+    return $base . 'product_image.php?id=' . $product_id . ($version ? '&v=' . urlencode((string) $version) : '');
+}
+
+/** Replaces 'image' with the database-image URL on rows that have an uploaded image. */
+function attachProductImages(array $rows): array
+{
+    foreach ($rows as &$row) {
+        if (!empty($row['has_image']) && isset($row['product_id'])) {
+            $row['image'] = productImageUrl((int) $row['product_id'], $row['image_ver'] ?? null);
+        }
+    }
+    unset($row);
+    return $rows;
+}
+
 /* ---------- catalogue ---------- */
 
 function getCategories(PDO $pdo): array
@@ -59,7 +93,7 @@ function getCategories(PDO $pdo): array
  */
 function getProducts(PDO $pdo, ?string $categoryName = null, ?string $search = null): array
 {
-    $sql = 'SELECT p.*, c.categoryname
+    $sql = 'SELECT p.*, c.categoryname, ' . imageColumnsSql('p.product_id') . '
             FROM products p
             LEFT JOIN categories c ON c.category_id = p.category_id
             WHERE p.is_active';
@@ -79,15 +113,18 @@ function getProducts(PDO $pdo, ?string $categoryName = null, ?string $search = n
     $sql .= ' ORDER BY p.product_id';
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchAll();
+    return attachProductImages($stmt->fetchAll());
 }
 
 function getProduct(PDO $pdo, int $product_id): ?array
 {
-    $stmt = $pdo->prepare('SELECT * FROM products WHERE product_id = ? AND is_active');
+    $stmt = $pdo->prepare(
+        'SELECT p.*, ' . imageColumnsSql('p.product_id') . '
+         FROM products p WHERE p.product_id = ? AND p.is_active'
+    );
     $stmt->execute([$product_id]);
     $row = $stmt->fetch();
-    return $row ?: null;
+    return $row ? attachProductImages([$row])[0] : null;
 }
 
 /* ---------- session cart ----------
@@ -153,9 +190,12 @@ function cartLines(PDO $pdo): array
     }
     $ids = array_map('intval', array_keys($cart));
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    $stmt = $pdo->prepare("SELECT * FROM products WHERE product_id IN ($placeholders) AND is_active");
+    $stmt = $pdo->prepare(
+        'SELECT p.*, ' . imageColumnsSql('p.product_id') . "
+         FROM products p WHERE p.product_id IN ($placeholders) AND p.is_active"
+    );
     $stmt->execute($ids);
-    $products = $stmt->fetchAll();
+    $products = attachProductImages($stmt->fetchAll());
 
     $lines = [];
     foreach ($products as $p) {
@@ -199,14 +239,14 @@ function getOrderByCode(PDO $pdo, string $code): ?array
         return null;
     }
     $stmt = $pdo->prepare(
-        'SELECT od.*, p.image
+        'SELECT od.*, p.image, ' . imageColumnsSql('od.product_id') . '
          FROM orderdetails od
          LEFT JOIN products p ON p.product_id = od.product_id
          WHERE od.order_id = ?
          ORDER BY od.order_detail_id'
     );
     $stmt->execute([$order['order_id']]);
-    $order['items'] = $stmt->fetchAll();
+    $order['items'] = attachProductImages($stmt->fetchAll());
     return $order;
 }
 
@@ -270,14 +310,14 @@ function getOrderItemsFor(PDO $pdo, array $orderIDs): array
     $ids = array_map('intval', $orderIDs);
     $placeholders = implode(',', array_fill(0, count($ids), '?'));
     $stmt = $pdo->prepare(
-        "SELECT od.*, p.image
+        'SELECT od.*, p.image, ' . imageColumnsSql('od.product_id') . "
          FROM orderdetails od
          LEFT JOIN products p ON p.product_id = od.product_id
          WHERE od.order_id IN ($placeholders)
          ORDER BY od.order_detail_id"
     );
     $stmt->execute($ids);
-    $rows = $stmt->fetchAll();
+    $rows = attachProductImages($stmt->fetchAll());
 
     $byOrder = [];
     foreach ($rows as $row) {
@@ -361,7 +401,7 @@ if (!defined('ORDER_STATUSES')) {
  */
 function getProductsWithCategory($pdo, $search = null) {
     $sql = "
-        SELECT p.*, c.categoryname 
+        SELECT p.*, c.categoryname, " . imageColumnsSql('p.product_id') . "
         FROM products p 
         LEFT JOIN categories c ON p.category_id = c.category_id 
         WHERE 1=1
@@ -378,5 +418,5 @@ function getProductsWithCategory($pdo, $search = null) {
     
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetchAll();
+    return attachProductImages($stmt->fetchAll());
 }
