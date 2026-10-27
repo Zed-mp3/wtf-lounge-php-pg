@@ -171,18 +171,19 @@ function cartRemove(int $product_id): void
 function cartClear(): void
 {
     $_SESSION['cart'] = [];
+    comboClear();
 }
 
 function cartCount(): int
 {
-    return array_sum(cartData());
+    return array_sum(cartData()) + array_sum(array_column(comboData(), 'qty'));
 }
 
 /**
  * Resolves the session cart against live product rows.
  * Silently drops lines whose product no longer exists/active.
  */
-function cartLines(PDO $pdo): array
+function plainCartLines(PDO $pdo): array
 {
     $cart = cartData();
     if (empty($cart)) {
@@ -419,4 +420,219 @@ function getProductsWithCategory($pdo, $search = null) {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return attachProductImages($stmt->fetchAll());
+}
+
+
+/* ---------- Budget meals (customised "combo" cart lines) ----------
+ * A budget meal is a product in the "BUDGET MEALS" category. Customers pick
+ * rice -> drink -> optional add-ons (budget_meal.php). Each distinct choice
+ * set is its own cart line, stored in $_SESSION['combos'] keyed by a hash:
+ *   [key => ['product_id' => int, 'rice' => id, 'drink' => id, 'addons' => [ids], 'qty' => int]]
+ * Option prices are re-read from the meal_options table, never from the client.
+ */
+
+const BUDGET_CATEGORY = 'budget meals';
+
+function isBudgetCategoryName(?string $name): bool
+{
+    return strtolower(trim((string) $name)) === BUDGET_CATEGORY;
+}
+
+/** The product (plus 'categoryname') if it is an active budget meal, else null. */
+function getBudgetMeal(PDO $pdo, int $product_id): ?array
+{
+    $product = getProduct($pdo, $product_id);
+    if (!$product) {
+        return null;
+    }
+    $stmt = $pdo->prepare(
+        'SELECT c.categoryname FROM products p
+         LEFT JOIN categories c ON c.category_id = p.category_id
+         WHERE p.product_id = ?'
+    );
+    $stmt->execute([$product_id]);
+    $name = $stmt->fetchColumn();
+    if (!isBudgetCategoryName($name)) {
+        return null;
+    }
+    $product['categoryname'] = $name;
+    return $product;
+}
+
+/**
+ * Options the customer can pick, grouped by step:
+ * ['rice' => [option_id => row], 'drink' => [...], 'addon' => [...]].
+ * Each option is a product chosen by the admin (meal_options.product_id);
+ * 'name' and 'stock' come from that product. Inactive / sold-out products are left out.
+ */
+function getMealOptions(PDO $pdo): array
+{
+    $groups = ['rice' => [], 'drink' => [], 'addon' => []];
+    $rows = $pdo->query(
+        'SELECT mo.option_id, mo.step, mo.product_id, mo.extra_price, mo.sort_order,
+                p.productname AS name, p.stock
+         FROM meal_options mo
+         JOIN products p ON p.product_id = mo.product_id
+         WHERE mo.is_active AND p.is_active AND p.stock > 0
+         ORDER BY mo.sort_order, mo.option_id'
+    )->fetchAll();
+    foreach ($rows as $row) {
+        $groups[$row['step']][(int) $row['option_id']] = $row;
+    }
+    return $groups;
+}
+
+function comboData(): array
+{
+    if (!isset($_SESSION['combos']) || !is_array($_SESSION['combos'])) {
+        $_SESSION['combos'] = [];
+    }
+    return $_SESSION['combos'];
+}
+
+function comboClear(): void
+{
+    $_SESSION['combos'] = [];
+}
+
+function comboKey(int $product_id, int $rice, int $drink, array $addons): string
+{
+    sort($addons);
+    return substr(md5($product_id . '|' . $rice . '|' . $drink . '|' . implode(',', $addons)), 0, 12);
+}
+
+/** Adds one customised meal (same choices merge into one line). Returns the line key. */
+function comboAdd(int $product_id, int $rice, int $drink, array $addons, int $qty, int $maxQty): string
+{
+    $addons = array_values(array_unique(array_map('intval', $addons)));
+    sort($addons);
+    $key = comboKey($product_id, $rice, $drink, $addons);
+    $combos = comboData();
+    $current = $combos[$key]['qty'] ?? 0;
+    $combos[$key] = [
+        'product_id' => $product_id,
+        'rice'       => $rice,
+        'drink'      => $drink,
+        'addons'     => $addons,
+        'qty'        => max(1, min($current + $qty, max(1, $maxQty))),
+    ];
+    $_SESSION['combos'] = $combos;
+    return $key;
+}
+
+function comboSetQty(string $key, int $qty): void
+{
+    $combos = comboData();
+    if (!isset($combos[$key])) {
+        return;
+    }
+    if ($qty <= 0) {
+        unset($combos[$key]);
+    } else {
+        $combos[$key]['qty'] = $qty;
+    }
+    $_SESSION['combos'] = $combos;
+}
+
+function comboRemove(string $key): void
+{
+    comboSetQty($key, 0);
+}
+
+/** Combo lines shaped like plain cart lines (+ line_key), so cart/checkout can treat them alike. */
+function comboLines(PDO $pdo): array
+{
+    $combos = comboData();
+    if (empty($combos)) {
+        return [];
+    }
+    $ids = [];
+    foreach ($combos as $c) {
+        $ids[] = (int) $c['rice'];
+        $ids[] = (int) $c['drink'];
+        foreach ($c['addons'] as $a) {
+            $ids[] = (int) $a;
+        }
+    }
+    $ids = array_values(array_unique(array_filter($ids)));
+    $opts = [];
+    if (!empty($ids)) {
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT mo.option_id, mo.step, mo.product_id, mo.extra_price, p.productname AS name
+             FROM meal_options mo
+             JOIN products p ON p.product_id = mo.product_id
+             WHERE mo.option_id IN ($placeholders) AND mo.is_active AND p.is_active"
+        );
+        $stmt->execute($ids);
+        foreach ($stmt->fetchAll() as $o) {
+            $opts[(int) $o['option_id']] = $o;
+        }
+    }
+
+    $lines = [];
+    foreach ($combos as $key => $c) {
+        $p = getProduct($pdo, (int) $c['product_id']);
+        if (!$p) {
+            continue;
+        }
+        $unit = (float) $p['price'];
+        $parts = [];
+        $optProducts = [];
+        $broken = false;
+        foreach (['rice', 'drink'] as $slot) {
+            $id = (int) $c[$slot];
+            if ($id === 0) {
+                continue;
+            }
+            if (!isset($opts[$id])) {
+                $broken = true;
+                break;
+            }
+            $unit += (float) $opts[$id]['extra_price'];
+            $parts[] = $opts[$id]['name'];
+            $optProducts[] = ['product_id' => (int) $opts[$id]['product_id'], 'name' => $opts[$id]['name'], 'role' => $slot];
+        }
+        $addonNames = [];
+        foreach ($c['addons'] as $a) {
+            if (!isset($opts[(int) $a])) {
+                $broken = true;
+                break;
+            }
+            $unit += (float) $opts[(int) $a]['extra_price'];
+            $addonNames[] = $opts[(int) $a]['name'];
+            $optProducts[] = ['product_id' => (int) $opts[(int) $a]['product_id'], 'name' => $opts[(int) $a]['name'], 'role' => 'addon'];
+        }
+        if ($broken) {
+            continue; // an option was removed/disabled since it was added
+        }
+        if ($addonNames) {
+            $parts[] = '+ ' . implode(', ', $addonNames);
+        }
+
+        $qty = (int) $c['qty'];
+        $p['price'] = $unit;
+        $p['qty'] = $qty;
+        $p['line_total'] = $unit * $qty;
+        $p['line_key'] = (string) $key;
+        $p['default_meta'] = implode(' • ', $parts);
+        $p['option_products'] = $optProducts;
+        $lines[] = $p;
+    }
+    return $lines;
+}
+
+/** Cart lines = normal items + customised budget meals. */
+function cartLines(PDO $pdo): array
+{
+    return array_merge(plainCartLines($pdo), comboLines($pdo));
+}
+
+/** Hidden input that identifies a cart line: line_key for budget meals, product_id otherwise. */
+function cartLineIdField(array $line): string
+{
+    if (!empty($line['line_key'])) {
+        return '<input type="hidden" name="line_key" value="' . h($line['line_key']) . '">';
+    }
+    return '<input type="hidden" name="product_id" value="' . (int) $line['product_id'] . '">';
 }

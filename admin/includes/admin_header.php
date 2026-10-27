@@ -59,6 +59,14 @@ $flash = flashGet();
         </svg>
         Menu
       </a>
+      <a href="meal_options.php" class="<?= $activeAdminNav === 'meal_options' ? 'active' : '' ?>">
+        <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 11h18"/>
+          <path d="M5 11a7 7 0 0 1 14 0"/>
+          <path d="M4 15h16l-1.5 4h-13z"/>
+        </svg>
+        Meal Options
+      </a>
       <a href="reports.php" class="<?= $activeAdminNav === 'reports' ? 'active' : '' ?>">
         <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/>

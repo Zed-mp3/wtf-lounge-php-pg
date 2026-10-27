@@ -73,6 +73,8 @@ require __DIR__ . '/includes/header.php';
               <span class="product-card__price"><?= formatPrice($p['price']) ?></span>
               <?php if ($stockStatus === 'out'): ?>
                 <button type="button" class="icon-btn" disabled style="opacity:.4;cursor:not-allowed;" aria-label="<?= h($p['productname']) ?> is out of stock">+</button>
+              <?php elseif (isBudgetCategoryName($p['categoryname'] ?? '')): ?>
+                <a href="budget_meal.php?id=<?= (int) $p['product_id'] ?>" class="icon-btn js-meal-open" aria-label="Build your <?= h($p['productname']) ?> meal" title="Choose rice, drink &amp; add-ons">+</a>
               <?php else: ?>
                 <form method="post" action="cart.php" class="inline-form">
                   <?= csrfField() ?>
@@ -87,5 +89,10 @@ require __DIR__ . '/includes/header.php';
         </div>
       <?php endforeach; ?>
     </div>
+
+    <dialog id="mealModal" class="meal-modal" aria-label="Build your meal">
+      <div class="meal-modal__content"></div>
+    </dialog>
+    <script src="js/budget-meal.js" defer></script>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>

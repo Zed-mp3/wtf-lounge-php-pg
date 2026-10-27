@@ -96,6 +96,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([
                         $orderId, $l['product_id'], $l['productname'], $l['price'], $l['qty'], $l['default_meta'],
                     ]);
+                    // Budget meal choices (rice / drink / add-ons) are products too: record them at
+                    // price 0 (their charge is already inside the meal line) so the same triggers
+                    // check and deduct THEIR stock.
+                    foreach ($l['option_products'] ?? [] as $op) {
+                        $role = $op['role'] === 'addon' ? 'Add-on' : ucfirst($op['role']);
+                        $stmt->execute([
+                            $orderId, $op['product_id'], $op['name'], 0, $l['qty'], $role . ' for ' . $l['productname'],
+                        ]);
+                    }
                 }
 
                 $pdo->commit();

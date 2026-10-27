@@ -54,11 +54,7 @@ function saveProductImage(PDO $pdo, int $productId, array $img): void
     $stmt->bindValue(':mime', $img['mime']);
     $stmt->bindParam(':data', $fp, PDO::PARAM_LOB);
     $stmt->execute();
-    // pdo_pgsql may replace $fp with the file's contents (string) after binding,
-    // so only close it if it is still a stream.
-    if (is_resource($fp)) {
-        fclose($fp);
-    }
+    fclose($fp);
 }
 
 // Handle form submissions
@@ -90,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $pdo->commit();
                 flashSet('Product "' . $productname . '" added successfully!');
-            } catch (Throwable $e) {
+            } catch (Exception $e) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
@@ -131,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $pdo->commit();
                 flashSet('Product updated successfully!');
-            } catch (Throwable $e) {
+            } catch (Exception $e) {
                 if ($pdo->inTransaction()) {
                     $pdo->rollBack();
                 }
@@ -151,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $pdo->prepare('DELETE FROM products WHERE product_id = ?');
                 $stmt->execute([$product_id]);
                 flashSet('Product deleted successfully.');
-            } catch (Throwable $e) {
+            } catch (Exception $e) {
                 flashSet('Error deleting product: ' . $e->getMessage());
             }
         }
@@ -166,7 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $pdo->prepare('INSERT INTO categories (categoryname) VALUES (?)');
                 $stmt->execute([$categoryname]);
                 flashSet('Category "' . $categoryname . '" added successfully!');
-            } catch (Throwable $e) {
+            } catch (Exception $e) {
                 flashSet('Error adding category: ' . $e->getMessage());
             }
         } else {
@@ -192,7 +188,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute([$category_id]);
                     flashSet('Category deleted successfully.');
                 }
-            } catch (Throwable $e) {
+            } catch (Exception $e) {
                 flashSet('Error deleting category: ' . $e->getMessage());
             }
         }

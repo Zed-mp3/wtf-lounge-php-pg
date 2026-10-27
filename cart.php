@@ -12,8 +12,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $action = $_POST['action'] ?? '';
     $productId = (int) ($_POST['product_id'] ?? 0);
+    $lineKey = (string) ($_POST['line_key'] ?? '');
 
-    if ($action === 'add' && $productId > 0) {
+    if ($lineKey !== '' && isset(comboData()[$lineKey]) && in_array($action, ['increment', 'decrement', 'remove'], true)) {
+        // Customised budget meal line
+        $combo = comboData()[$lineKey];
+        $mealProduct = getProduct($pdo, (int) $combo['product_id']);
+        $maxQty = $mealProduct ? max(1, (int) $mealProduct['stock']) : 1;
+        if ($action === 'increment') {
+            comboSetQty($lineKey, min((int) $combo['qty'] + 1, $maxQty));
+        } elseif ($action === 'decrement') {
+            comboSetQty($lineKey, (int) $combo['qty'] - 1);
+        } else {
+            comboRemove($lineKey);
+        }
+    } elseif ($action === 'add' && $productId > 0 && getBudgetMeal($pdo, $productId)) {
+        // Budget meals must go through the Rice -> Drink -> Add-ons flow.
+        header('Location: budget_meal.php?id=' . $productId);
+        exit;
+    } elseif ($action === 'add' && $productId > 0) {
         $product = getProduct($pdo, $productId);
         if ($product && (int) $product['stock'] > 0) {
             $cart = cartData();
@@ -78,14 +95,14 @@ require __DIR__ . '/includes/header.php';
                   <form method="post" action="cart.php" class="inline-form">
                     <?= csrfField() ?>
                     <input type="hidden" name="action" value="decrement">
-                    <input type="hidden" name="product_id" value="<?= (int) $l['product_id'] ?>">
+                    <?= cartLineIdField($l) ?>
                     <button type="submit" aria-label="Decrease quantity">−</button>
                   </form>
                   <span><?= (int) $l['qty'] ?></span>
                   <form method="post" action="cart.php" class="inline-form">
                     <?= csrfField() ?>
                     <input type="hidden" name="action" value="increment">
-                    <input type="hidden" name="product_id" value="<?= (int) $l['product_id'] ?>">
+                    <?= cartLineIdField($l) ?>
                     <button type="submit" aria-label="Increase quantity">+</button>
                   </form>
                 </div>
@@ -95,7 +112,7 @@ require __DIR__ . '/includes/header.php';
                 <form method="post" action="cart.php" class="inline-form">
                   <?= csrfField() ?>
                   <input type="hidden" name="action" value="remove">
-                  <input type="hidden" name="product_id" value="<?= (int) $l['product_id'] ?>">
+                  <?= cartLineIdField($l) ?>
                   <button type="submit" class="cart-line__remove" aria-label="Remove <?= h($l['productname']) ?>">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                   </button>

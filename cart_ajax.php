@@ -25,9 +25,41 @@ if (!isset($_POST['csrf_token']) || !csrfVerifyAjax($_POST['csrf_token'])) {
 
 $action = $_POST['action'] ?? '';
 $productId = (int) ($_POST['product_id'] ?? 0);
+$lineKey = (string) ($_POST['line_key'] ?? '');
 $response = ['success' => false];
 
-if ($action === 'increment' && $productId > 0) {
+if ($lineKey !== '' && isset(comboData()[$lineKey]) && in_array($action, ['increment', 'decrement', 'remove'], true)) {
+    // Customised budget meal line
+    $combo = comboData()[$lineKey];
+    $mealProduct = getProduct($pdo, (int) $combo['product_id']);
+    $maxQty = $mealProduct ? max(1, (int) $mealProduct['stock']) : 1;
+    if ($action === 'increment') {
+        comboSetQty($lineKey, min((int) $combo['qty'] + 1, $maxQty));
+    } elseif ($action === 'decrement') {
+        comboSetQty($lineKey, (int) $combo['qty'] - 1);
+    } else {
+        comboRemove($lineKey);
+    }
+
+    $qty = 0;
+    $lineTotal = 0;
+    $lines = cartLines($pdo);
+    foreach ($lines as $line) {
+        if (($line['line_key'] ?? '') === $lineKey) {
+            $qty = (int) $line['qty'];
+            $lineTotal = $line['line_total'];
+            break;
+        }
+    }
+    $response = [
+        'success' => true,
+        'qty' => $qty,
+        'line_total' => $lineTotal,
+        'subtotal' => cartSubtotal($pdo),
+        'cart_count' => array_sum(array_column($lines, 'qty'))
+    ];
+
+} elseif ($action === 'increment' && $productId > 0) {
     $cart = cartData();
     $newQty = ($cart[$productId] ?? 0) + 1;
     $product = getProduct($pdo, $productId);
