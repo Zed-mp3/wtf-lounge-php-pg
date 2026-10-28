@@ -52,13 +52,9 @@ function saveProductImage(PDO $pdo, int $productId, array $img): void
     );
     $stmt->bindValue(':id', $productId, PDO::PARAM_INT);
     $stmt->bindValue(':mime', $img['mime']);
-    // bindValue (not bindParam): pdo_pgsql overwrites a by-reference LOB variable with the
-    // file's raw bytes during execute(), which made fclose() fail with a TypeError.
-    $stmt->bindValue(':data', $fp, PDO::PARAM_LOB);
+    $stmt->bindParam(':data', $fp, PDO::PARAM_LOB);
     $stmt->execute();
-    if (is_resource($fp)) {
-        fclose($fp);
-    }
+    fclose($fp);
 }
 
 // Handle form submissions

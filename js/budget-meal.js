@@ -52,7 +52,7 @@
             steps.forEach(function (step) {
                 checkedIn(step).forEach(function (i) {
                     var p = parseFloat(i.getAttribute('data-price')) || 0;
-                    addRow(list, i.getAttribute('data-label'), i.value === '0' ? '\u2014' : (p > 0 ? '+' + money(p) : 'Included'));
+                    addRow(list, i.getAttribute('data-label'), p > 0 ? '+' + money(p) : 'Included');
                 });
             });
             form.querySelector('#mealTotal').textContent = money(unitPrice() * qty);
