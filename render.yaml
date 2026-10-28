@@ -2,6 +2,7 @@ services:
   - type: web
     name: wtf-lounge
     runtime: docker
+    # Free plan blocks SMTP, so emails go through the Gmail API (GOOGLE_* variables below).
     plan: free
     envVars:
       - key: DB_HOST
@@ -18,3 +19,18 @@ services:
         value: require
       - key: APP_DEBUG
         value: "false"
+      # Sender Gmail address. Keep real passwords/tokens out of the code: set them in Render > Environment.
+      - key: MAIL_USERNAME
+        sync: false
+      - key: MAIL_FROM_NAME
+        value: WTF Lounge
+      # Free plan: Gmail API over HTTPS (SMTP is blocked on Render's free plan).
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false
+      # Paid plan alternative: Gmail SMTP with an App Password.
+      # - key: MAIL_PASSWORD
+      #   sync: false

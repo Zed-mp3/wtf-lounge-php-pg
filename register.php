@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/auth.php';
 configureSession();
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/includes/email_verification.php';
 
 if (isLoggedIn()) {
     header('Location: menu.php');
@@ -18,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $fullname = trim($_POST['fullname'] ?? '');
     $phone = trim($_POST['phone'] ?? '');
+    $email = strtolower(trim($_POST['email'] ?? ''));
     $address = trim($_POST['address'] ?? '');
     $password = $_POST['password'] ?? '';
     $confirm_password = $_POST['confirm_password'] ?? '';
@@ -29,6 +31,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Phone number is required.';
     } elseif (!preg_match('/^[\d\-\+\s]{7,20}$/', $phone)) {
         $errors[] = 'Enter a valid phone number.';
+    }
+    if ($email === '') {
+        $errors[] = 'Email address is required.';
+    } elseif (strlen($email) > 255 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $errors[] = 'Enter a valid email address.';
     }
     if ($address === '') {
         $errors[] = 'Address is required.';
@@ -46,13 +53,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($stmt->fetch()) {
             $errors[] = 'Phone number already registered.';
         }
+        if (empty($errors)) {
+            $stmt = $pdo->prepare('SELECT customer_id FROM customers WHERE lower(email) = ?');
+            $stmt->execute([$email]);
+            if ($stmt->fetch()) {
+                $errors[] = 'Email address already registered.';
+            }
+        }
     }
 
     if (empty($errors)) {
         $passwordHash = password_hash($password, PASSWORD_DEFAULT);
+
+        // Email set up: the account is only created after the emailed code is entered (verify_email.php).
+        if (mailConfigured()) {
+            $started = beginRegistrationVerification([
+                'fullname'      => $fullname,
+                'phone'         => $phone,
+                'email'         => $email,
+                'address'       => $address,
+                'password_hash' => $passwordHash,
+            ]);
+            if ($started) {
+                flashSet('We emailed a 6-digit code to ' . maskEmail($email) . '. Enter it to finish creating your account.');
+                header('Location: verify_email.php');
+                exit;
+            }
+            clearPendingRegistration();
+            $errors[] = 'We could not send the verification email. Check the address and try again in a moment.';
+        }
+    }
+
+    // Email not set up on this server: register straight away, as before.
+    if (empty($errors) && !mailConfigured()) {
         try {
-            $stmt = $pdo->prepare('INSERT INTO customers (fullname, phone, address, password_hash) VALUES (?, ?, ?, ?) RETURNING customer_id');
-            $stmt->execute([$fullname, $phone, $address, $passwordHash]);
+            $stmt = $pdo->prepare('INSERT INTO customers (fullname, phone, email, address, password_hash) VALUES (?, ?, ?, ?, ?) RETURNING customer_id');
+            $stmt->execute([$fullname, $phone, $email, $address, $passwordHash]);
 
             regenerateSession();
             $_SESSION['user_id'] = (int) $stmt->fetchColumn();
@@ -92,6 +128,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <div class="auth__field">
         <label for="phone">Phone Number</label>
         <input type="tel" id="phone" name="phone" required value="<?= h($_POST['phone'] ?? '') ?>" placeholder="e.g., 0917-123-4567">
+      </div>
+      <div class="auth__field">
+        <label for="email">Email Address</label>
+        <input type="email" id="email" name="email" required value="<?= h($_POST['email'] ?? '') ?>" placeholder="e.g., juan@gmail.com" autocomplete="email">
       </div>
       <div class="auth__field">
         <label for="address">Address</label>

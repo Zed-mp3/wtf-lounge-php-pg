@@ -52,8 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!empty($options['rice']) && !isset($options['rice'][$sel['rice']])) {
         $errors[] = 'Please choose your rice.';
     }
-    if (!empty($options['drink']) && !isset($options['drink'][$sel['drink']])) {
-        $errors[] = 'Please choose your drink.';
+    // Drink is optional: 0 = "No drink".
+    if ($sel['drink'] !== 0 && !isset($options['drink'][$sel['drink']])) {
+        $errors[] = 'That drink is no longer available.';
     }
     foreach ($sel['addons'] as $a) {
         if (!isset($options['addon'][$a])) {
@@ -68,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!empty($options['rice'])) {
             $chosen[] = $options['rice'][$sel['rice']];
         }
-        if (!empty($options['drink'])) {
+        if ($sel['drink'] !== 0) {
             $chosen[] = $options['drink'][$sel['drink']];
         }
         foreach ($sel['addons'] as $a) {
@@ -82,7 +83,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         comboAdd(
             (int) $product['product_id'],
             empty($options['rice']) ? 0 : $sel['rice'],
-            empty($options['drink']) ? 0 : $sel['drink'],
+            $sel['drink'],
             $sel['addons'],
             max(1, min($sel['qty'], $cap)),
             $cap
@@ -112,7 +113,7 @@ function renderMealOptions(array $group, string $name, string $type, array $sele
 
 $steps = [];
 if (!empty($options['rice']))  { $steps[] = 'Rice'; }
-if (!empty($options['drink'])) { $steps[] = 'Drink'; }
+if (!empty($options['drink'])) { $steps[] = 'Drink (optional)'; }
 if (!empty($options['addon'])) { $steps[] = 'Add-ons (optional)'; }
 $steps[] = 'Review';
 
@@ -166,9 +167,16 @@ if (!$partial) {
       <?php endif; ?>
 
       <?php if (!empty($options['drink'])): ?>
-        <section class="panel meal-step" data-step="drink" data-required="1">
-          <h2 class="panel__title">Choose your drink</h2>
-          <div class="meal-opts"><?php renderMealOptions($options['drink'], 'drink', 'radio', [$sel['drink']]); ?></div>
+        <section class="panel meal-step" data-step="drink">
+          <h2 class="panel__title">Choose your drink <small style="font-weight:400;">(optional)</small></h2>
+          <div class="meal-opts">
+            <label class="meal-opt">
+              <input type="radio" name="drink" value="0" data-price="0.00" data-label="No drink" <?= $sel['drink'] === 0 ? 'checked' : '' ?>>
+              <span class="meal-opt__name">No drink</span>
+              <span class="meal-opt__price">Skip the drink</span>
+            </label>
+            <?php renderMealOptions($options['drink'], 'drink', 'radio', [$sel['drink']]); ?>
+          </div>
         </section>
       <?php endif; ?>
 

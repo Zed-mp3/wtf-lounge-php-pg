@@ -3,7 +3,7 @@ Options -Indexes -MultiViews
 ServerSignature Off
 
 # Never serve internals, backups, schema dumps, dotfiles or docs.
-<FilesMatch "(^\.|\.(bak|sql|md|yml|yaml|log|ini|dist|lock|sh)$|^Dockerfile$)">
+<FilesMatch "(^\.|\.(bak|sql|md|yml|yaml|log|ini|dist|lock|sh)$|^Dockerfile$|^composer\.json$)">
     Require all denied
 </FilesMatch>
 <FilesMatch "^\.htaccess$">
@@ -11,7 +11,7 @@ ServerSignature Off
 </FilesMatch>
 
 # Include/config files are only ever loaded by PHP itself, not by browsers.
-RedirectMatch 404 ^/(admin/)?(includes|config|sql|\.git|\.claude)(/|$)
+RedirectMatch 404 ^/(admin/)?(includes|config|sql|vendor|\.git|\.claude)(/|$)
 
 # Admin and session-bearing pages must never be cached by proxies/browsers.
 <IfModule mod_headers.c>
