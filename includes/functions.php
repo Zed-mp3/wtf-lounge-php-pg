@@ -467,7 +467,7 @@ function getBudgetMeal(PDO $pdo, int $product_id): ?array
  */
 function getMealOptions(PDO $pdo): array
 {
-    $groups = ['rice' => [], 'drink' => [], 'addon' => []];
+    $groups = ['meal' => [], 'rice' => [], 'drink' => [], 'addon' => []];
     $rows = $pdo->query(
         'SELECT mo.option_id, mo.step, mo.product_id, mo.extra_price, mo.sort_order,
                 p.productname AS name, p.stock
@@ -495,22 +495,27 @@ function comboClear(): void
     $_SESSION['combos'] = [];
 }
 
-function comboKey(int $product_id, int $rice, int $drink, array $addons): string
+function comboKey(int $product_id, int $rice, int $drink, array $addons, int $meal = 0): string
 {
     sort($addons);
-    return substr(md5($product_id . '|' . $rice . '|' . $drink . '|' . implode(',', $addons)), 0, 12);
+    $raw = $product_id . '|' . $rice . '|' . $drink . '|' . implode(',', $addons);
+    if ($meal > 0) {
+        $raw .= '|m' . $meal; // carts made before the "Meals" step keep their old keys
+    }
+    return substr(md5($raw), 0, 12);
 }
 
 /** Adds one customised meal (same choices merge into one line). Returns the line key. */
-function comboAdd(int $product_id, int $rice, int $drink, array $addons, int $qty, int $maxQty): string
+function comboAdd(int $product_id, int $rice, int $drink, array $addons, int $qty, int $maxQty, int $meal = 0): string
 {
     $addons = array_values(array_unique(array_map('intval', $addons)));
     sort($addons);
-    $key = comboKey($product_id, $rice, $drink, $addons);
+    $key = comboKey($product_id, $rice, $drink, $addons, $meal);
     $combos = comboData();
     $current = $combos[$key]['qty'] ?? 0;
     $combos[$key] = [
         'product_id' => $product_id,
+        'meal'       => $meal,
         'rice'       => $rice,
         'drink'      => $drink,
         'addons'     => $addons,
@@ -548,6 +553,7 @@ function comboLines(PDO $pdo): array
     }
     $ids = [];
     foreach ($combos as $c) {
+        $ids[] = (int) ($c['meal'] ?? 0);
         $ids[] = (int) $c['rice'];
         $ids[] = (int) $c['drink'];
         foreach ($c['addons'] as $a) {
@@ -580,8 +586,8 @@ function comboLines(PDO $pdo): array
         $parts = [];
         $optProducts = [];
         $broken = false;
-        foreach (['rice', 'drink'] as $slot) {
-            $id = (int) $c[$slot];
+        foreach (['meal', 'rice', 'drink'] as $slot) {
+            $id = (int) ($c[$slot] ?? 0);
             if ($id === 0) {
                 continue;
             }
