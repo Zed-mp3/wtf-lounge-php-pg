@@ -214,6 +214,7 @@ input { font-family: inherit; }
 .hamburger {
   display: none;
   flex-direction: column;
+  justify-content: center;
   gap: 5px;
   background: none;
   border: none;
@@ -221,9 +222,15 @@ input { font-family: inherit; }
   width: 28px;
   height: 22px;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent; /* removes the blue flash on tap */
 }
 .hamburger span {
   display: block;
+  width: 100%;
+  min-width: 28px;
+  flex-shrink: 0;
   height: 2px;
   background: var(--on-surface);
   border-radius: 2px;
