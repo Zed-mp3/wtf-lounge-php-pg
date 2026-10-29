@@ -1,299 +1,230 @@
 <?php
-require_once __DIR__ . '/../includes/auth.php';
+/**
+ * Budget Meal builder:  Budget meal -> Rice -> Drink -> Add-ons (optional) -> Cart.
+ * The choices are products picked by the admin (admin/meal_options.php).
+ * ?partial=1 returns just the builder form, used by the modal on menu.php.
+ */
+require_once __DIR__ . '/includes/auth.php';
 configureSession();
-require_once __DIR__ . '/../config/db.php';
-require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/config/db.php';
+require_once __DIR__ . '/includes/functions.php';
 
-requireAdmin();
+requireLogin();
 
-$stepLabels = ['meal' => 'Meals', 'rice' => 'Rice', 'drink' => 'Drinks', 'addon' => 'Add-ons (optional)'];
-$stepHints = [
-    'meal'  => 'Step 1 — customer must pick one (e.g. products from your Meals category). Extra charge 0 = included in the budget meal price.',
-    'rice'  => 'Step 2 — customer must pick one. Extra charge 0 = included in the budget meal price.',
-    'drink' => 'Step 3 — optional, customers also see a "No drink" choice. Extra charge 0 = included in the budget meal price.',
-    'addon' => 'Step 4 — optional, customer can pick any number. The extra charge is added to the meal price.',
-];
-
-// ---- Handle changes (POST) ----
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrfVerify();
-    $action = $_POST['action'] ?? '';
-
-    try {
-        if ($action === 'add_option') {
-            $step = (string) ($_POST['step'] ?? '');
-            $productId = (int) ($_POST['product_id'] ?? 0);
-            $extra = round(min(99999.99, max(0, (float) ($_POST['extra_price'] ?? 0))), 2);
-
-            if (!isset($stepLabels[$step]) || $productId <= 0) {
-                flashSet('Choose a step and a product.');
-            } elseif (!getProduct($pdo, $productId)) {
-                flashSet('That product was not found or is inactive.');
-            } elseif (getBudgetMeal($pdo, $productId)) {
-                flashSet('A budget meal cannot be used as a choice inside another budget meal.');
-            } else {
-                $stmt = $pdo->prepare(
-                    'INSERT INTO meal_options (step, product_id, extra_price)
-                     VALUES (?, ?, ?)
-                     ON CONFLICT (step, product_id) DO NOTHING'
-                );
-                $stmt->execute([$step, $productId, $extra]);
-                flashSet($stmt->rowCount() > 0 ? 'Option added to ' . $stepLabels[$step] . '.' : 'That product is already in this step.');
-            }
-        } elseif ($action === 'update_option') {
-            $optionId = (int) ($_POST['option_id'] ?? 0);
-            $extra = round(min(99999.99, max(0, (float) ($_POST['extra_price'] ?? 0))), 2);
-            $isActive = isset($_POST['is_active']) ? 'true' : 'false';
-            if ($optionId > 0) {
-                $stmt = $pdo->prepare('UPDATE meal_options SET extra_price = ?, is_active = ? WHERE option_id = ?');
-                $stmt->execute([$extra, $isActive, $optionId]);
-                flashSet('Option updated.');
-            }
-        } elseif ($action === 'delete_option') {
-            $optionId = (int) ($_POST['option_id'] ?? 0);
-            if ($optionId > 0) {
-                $stmt = $pdo->prepare('DELETE FROM meal_options WHERE option_id = ?');
-                $stmt->execute([$optionId]);
-                flashSet('Option removed.');
-            }
-        }
-    } catch (PDOException $e) {
-        flashSet('Could not save: ' . $e->getMessage());
+$partial = isset($_GET['partial']);
+$productId = (int) ($_GET['id'] ?? $_POST['product_id'] ?? 0);
+$product = $productId > 0 ? getBudgetMeal($pdo, $productId) : null;
+if (!$product) {
+    if ($partial) {
+        http_response_code(404);
+        exit;
     }
-
-    header('Location: meal_options.php');
+    flashSet('That budget meal is not available.');
+    header('Location: menu.php');
+    exit;
+}
+$backUrl = 'menu.php?category=' . urlencode($product['categoryname']);
+$stock = (int) $product['stock'];
+if ($stock <= 0) {
+    if ($partial) {
+        http_response_code(404);
+        exit;
+    }
+    flashSet($product['productname'] . ' is out of stock.');
+    header('Location: ' . $backUrl);
     exit;
 }
 
-// ---- Load data ----
-$grouped = ['meal' => [], 'rice' => [], 'drink' => [], 'addon' => []];
-$setupNeeded = false;
-try {
-    $rows = $pdo->query(
-        'SELECT mo.option_id, mo.step, mo.extra_price, mo.sort_order, mo.is_active,
-                p.product_id, p.productname, p.price, p.stock, p.is_active AS product_active,
-                c.categoryname
-         FROM meal_options mo
-         JOIN products p ON p.product_id = mo.product_id
-         LEFT JOIN categories c ON c.category_id = p.category_id
-         ORDER BY mo.sort_order, mo.option_id'
-    )->fetchAll();
-    foreach ($rows as $r) {
-        $grouped[$r['step']][] = $r;
+$options = getMealOptions($pdo);
+$maxQty = min($stock, 10);
+$errors = [];
+$sel = ['meal' => 0, 'rice' => 0, 'drink' => 0, 'addons' => [], 'qty' => 1];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrfVerify();
+
+    $sel['meal']   = (int) ($_POST['meal'] ?? 0);
+    $sel['rice']   = (int) ($_POST['rice'] ?? 0);
+    $sel['drink']  = (int) ($_POST['drink'] ?? 0);
+    $sel['addons'] = array_values(array_unique(array_map('intval', (array) ($_POST['addons'] ?? []))));
+    $sel['qty']    = max(1, min((int) ($_POST['qty'] ?? 1), $maxQty));
+
+    // A step is only required when the admin has set up options for it.
+    if (!empty($options['meal']) && !isset($options['meal'][$sel['meal']])) {
+        $errors[] = 'Please choose your meal.';
     }
-} catch (PDOException $e) {
-    $setupNeeded = true; // meal_options table (or its product_id column) is missing
-}
-
-$categories = getCategories($pdo);
-// Products the admin can pick from: active ones, excluding the budget meals themselves.
-$pickable = $pdo->query(
-    'SELECT p.product_id, p.productname, p.price, p.stock, p.category_id, c.categoryname
-     FROM products p
-     LEFT JOIN categories c ON c.category_id = p.category_id
-     WHERE p.is_active AND (c.categoryname IS NULL OR LOWER(TRIM(c.categoryname)) <> \'budget meals\')
-     ORDER BY c.categoryname, p.productname'
-)->fetchAll();
-
-$pickJson = [];
-foreach ($pickable as $p) {
-    $pickJson[] = [
-        'id'    => (int) $p['product_id'],
-        'name'  => $p['productname'],
-        'cat'   => (int) $p['category_id'],
-        'price' => (float) $p['price'],
-        'stock' => (int) $p['stock'],
-    ];
-}
-
-$pageTitle = 'Meal Options — WTF Lounge Admin';
-$activeAdminNav = 'meal_options';
-require __DIR__ . '/includes/admin_header.php';
-?>
-
-<h1 class="headline-lg">Budget Meal Options</h1>
-<p class="body-md">Choose which products customers can pick for each budget meal: Rice, then Drink, then optional Add-ons. Products come from <a href="menu.php">Manage Menu</a>, so names, stock and availability stay in sync.</p>
-
-<?php if ($setupNeeded): ?>
-    <div class="admin-welcome" style="flex-direction:column; align-items:stretch;">
-        <h2 style="font-family:'Plus Jakarta Sans',sans-serif; font-weight:700; font-size:18px; margin:0 0 8px;">One-time setup needed</h2>
-        <p style="margin:0;">Run <code>sql/budget_meals.sql</code> in the Supabase SQL editor (or pgAdmin), then reload this page.</p>
-    </div>
-<?php else: ?>
-
-<!-- Add option -->
-<div class="admin-welcome" style="flex-direction:column; align-items:stretch;">
-    <h2 style="font-family:'Plus Jakarta Sans',sans-serif; font-weight:700; font-size:18px; margin:0 0 12px;">Add an option</h2>
-    <form method="post" action="meal_options.php" id="addForm" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-        <?= csrfField() ?>
-        <input type="hidden" name="action" value="add_option">
-
-        <div class="field" style="margin:0;">
-            <label for="addStep">Step</label>
-            <select name="step" id="addStep" required>
-                <?php foreach ($stepLabels as $key => $label): ?>
-                    <option value="<?= h($key) ?>"><?= h($label) ?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-
-        <div class="field" style="margin:0;">
-            <label for="addCat">Category</label>
-            <select id="addCat">
-                <option value="">All categories</option>
-                <?php foreach ($categories as $cat): ?>
-                    <?php if (strtolower(trim($cat['categoryname'])) === BUDGET_CATEGORY) { continue; } ?>
-                    <option value="<?= (int) $cat['category_id'] ?>"><?= h($cat['categoryname']) ?></option>
-                <?php endforeach; ?>
-            </select>
-        </div>
-
-        <div class="field" style="margin:0; grid-column: span 2;">
-            <label for="addProduct">Product</label>
-            <select name="product_id" id="addProduct" required></select>
-            <small id="addInfo"></small>
-        </div>
-
-        <div class="field" style="margin:0; grid-column: span 2;">
-            <label for="addPrice">Extra charge (₱)</label>
-            <input type="number" step="0.01" min="0" name="extra_price" id="addPrice" value="0">
-        </div>
-
-        <div style="grid-column: span 2;">
-            <button type="submit" class="btn btn--primary">Add option</button>
-        </div>
-    </form>
-</div>
-
-<?php foreach ($stepLabels as $key => $label): ?>
-    <h2 class="panel__title" style="margin-top:24px; margin-bottom:4px;"><?= h($label) ?></h2>
-    <p class="body-md" style="margin:0 0 12px;"><?= h($stepHints[$key]) ?></p>
-    <div class="table-scroll">
-        <table class="admin-table">
-            <thead>
-                <tr>
-                    <th>Product</th>
-                    <th>Regular price</th>
-                    <th>Stock</th>
-                    <th>Extra charge (₱)</th>
-                    <th>Show</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($grouped[$key] as $r): ?>
-                    <?php
-                    $fid = 'opt' . (int) $r['option_id'];
-                    if (!$r['is_active']) {
-                        [$statusClass, $statusText] = ['status-badge--cancelled', 'Off'];
-                    } elseif (!$r['product_active']) {
-                        [$statusClass, $statusText] = ['status-badge--cancelled', 'Hidden — product inactive'];
-                    } elseif ((int) $r['stock'] <= 0) {
-                        [$statusClass, $statusText] = ['status-badge--cancelled', 'Hidden — out of stock'];
-                    } else {
-                        [$statusClass, $statusText] = ['status-badge--completed', 'Live'];
-                    }
-                    ?>
-                    <tr>
-                        <td>
-                            <form method="post" action="meal_options.php" id="<?= $fid ?>">
-                                <?= csrfField() ?>
-                                <input type="hidden" name="option_id" value="<?= (int) $r['option_id'] ?>">
-                            </form>
-                            <strong><?= h($r['productname']) ?></strong><br>
-                            <small><?= h($r['categoryname'] ?? 'Uncategorized') ?></small>
-                        </td>
-                        <td><?= formatPrice((float) $r['price']) ?></td>
-                        <td><?= (int) $r['stock'] ?></td>
-                        <td><input form="<?= $fid ?>" type="number" step="0.01" min="0" name="extra_price" value="<?= h(number_format((float) $r['extra_price'], 2, '.', '')) ?>" style="width:90px;"></td>
-                        <td><input form="<?= $fid ?>" type="checkbox" name="is_active" value="1" <?= $r['is_active'] ? 'checked' : '' ?> aria-label="Show to customers"></td>
-                        <td><span class="status-badge <?= $statusClass ?>"><?= h($statusText) ?></span></td>
-                        <td>
-                            <div class="admin-actions">
-                                <button form="<?= $fid ?>" type="submit" name="action" value="update_option" class="btn btn--secondary" style="padding:4px 12px; font-size:11px;">Save</button>
-                                <button form="<?= $fid ?>" type="submit" name="action" value="delete_option" onclick="return confirm('Remove this option?')" style="padding:4px 12px; border:1px solid var(--error); border-radius:var(--radius-sm); background:var(--error-container); color:var(--error); cursor:pointer; font-size:11px; font-weight:600;">Remove</button>
-                            </div>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                <?php if (empty($grouped[$key])): ?>
-                    <tr><td colspan="7" style="text-align:center;padding:24px;">Nothing here yet. Customers skip this step until you add an option.</td></tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-<?php endforeach; ?>
-
-<script>
-(function () {
-    var products = <?= json_encode($pickJson, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>;
-    var stepSel = document.getElementById('addStep');
-    var catSel = document.getElementById('addCat');
-    var prodSel = document.getElementById('addProduct');
-    var priceInp = document.getElementById('addPrice');
-    var info = document.getElementById('addInfo');
-    var priceTouched = false;
-
-    function money(n) { return '\u20B1' + Number(n).toFixed(2); }
-
-    function fillProducts() {
-        var cat = catSel.value;
-        prodSel.innerHTML = '';
-        var ph = document.createElement('option');
-        ph.value = '';
-        ph.textContent = 'Select a product';
-        prodSel.appendChild(ph);
-        products.forEach(function (p) {
-            if (cat && String(p.cat) !== cat) { return; }
-            var o = document.createElement('option');
-            o.value = p.id;
-            o.textContent = p.name + ' (' + money(p.price) + ')';
-            prodSel.appendChild(o);
-        });
-        onProductChange();
+    if (!empty($options['rice']) && !isset($options['rice'][$sel['rice']])) {
+        $errors[] = 'Please choose your rice.';
     }
-
-    function currentProduct() {
-        var id = parseInt(prodSel.value, 10);
-        return products.filter(function (p) { return p.id === id; })[0] || null;
+    // Drink is optional: 0 = "No drink".
+    if ($sel['drink'] !== 0 && !isset($options['drink'][$sel['drink']])) {
+        $errors[] = 'That drink is no longer available.';
     }
-
-    // Add-ons usually charge the product's own price; rice/drinks are usually included (0).
-    function suggestPrice() {
-        if (priceTouched) { return; }
-        var p = currentProduct();
-        priceInp.value = (stepSel.value === 'addon' && p) ? Number(p.price).toFixed(2) : '0.00';
-    }
-
-    function onProductChange() {
-        var p = currentProduct();
-        info.textContent = p ? 'Regular price ' + money(p.price) + ' · ' + p.stock + ' in stock' : '';
-        suggestPrice();
-    }
-
-    priceInp.addEventListener('input', function () { priceTouched = true; });
-    // Jump to the matching category (Meals / Drinks / Add ons) when the step changes.
-    function preselectCategory() {
-        var wanted = { meal: 'meals', drink: 'drinks', addon: 'add ons' }[stepSel.value];
-        if (!wanted) { return; }
-        for (var i = 0; i < catSel.options.length; i++) {
-            if (catSel.options[i].textContent.trim().toLowerCase() === wanted) {
-                catSel.value = catSel.options[i].value;
-                fillProducts();
-                return;
-            }
+    foreach ($sel['addons'] as $a) {
+        if (!isset($options['addon'][$a])) {
+            $errors[] = 'One of the add-ons you picked is no longer available.';
+            break;
         }
     }
 
-    stepSel.addEventListener('change', function () { priceTouched = false; preselectCategory(); suggestPrice(); });
-    catSel.addEventListener('change', fillProducts);
-    prodSel.addEventListener('change', function () { priceTouched = false; onProductChange(); });
-    fillProducts();
-    preselectCategory();
-})();
-</script>
+    if (empty($errors)) {
+        // Never take more than the meal OR any chosen option has in stock.
+        $chosen = [];
+        if (!empty($options['meal'])) {
+            $chosen[] = $options['meal'][$sel['meal']];
+        }
+        if (!empty($options['rice'])) {
+            $chosen[] = $options['rice'][$sel['rice']];
+        }
+        if ($sel['drink'] !== 0) {
+            $chosen[] = $options['drink'][$sel['drink']];
+        }
+        foreach ($sel['addons'] as $a) {
+            $chosen[] = $options['addon'][$a];
+        }
+        $cap = $stock;
+        foreach ($chosen as $o) {
+            $cap = min($cap, (int) $o['stock']);
+        }
 
+        comboAdd(
+            (int) $product['product_id'],
+            empty($options['rice']) ? 0 : $sel['rice'],
+            $sel['drink'],
+            $sel['addons'],
+            max(1, min($sel['qty'], $cap)),
+            $cap,
+            empty($options['meal']) ? 0 : $sel['meal']
+        );
+        flashSet($product['productname'] . ' meal added to cart.');
+        header('Location: ' . $backUrl);
+        exit;
+    }
+}
+
+/** Renders one group of option cards. */
+function renderMealOptions(array $group, string $name, string $type, array $selectedIds): void
+{
+    foreach ($group as $id => $o) {
+        $checked = in_array($id, $selectedIds, true) ? 'checked' : '';
+        $extra = (float) $o['extra_price'];
+        ?>
+        <label class="meal-opt">
+          <input type="<?= $type ?>" name="<?= h($name) ?>" value="<?= (int) $id ?>"
+                 data-price="<?= h(number_format($extra, 2, '.', '')) ?>" data-label="<?= h($o['name']) ?>" <?= $checked ?>>
+          <span class="meal-opt__name"><?= h($o['name']) ?></span>
+          <span class="meal-opt__price"><?= $extra > 0 ? '+' . formatPrice($extra) : 'Included' ?></span>
+        </label>
+        <?php
+    }
+}
+
+$steps = [];
+if (!empty($options['meal']))  { $steps[] = 'Meal'; }
+if (!empty($options['rice']))  { $steps[] = 'Rice'; }
+if (!empty($options['drink'])) { $steps[] = 'Drink (optional)'; }
+if (!empty($options['addon'])) { $steps[] = 'Add-ons (optional)'; }
+$steps[] = 'Review';
+
+if (!$partial) {
+    $pageTitle = 'Build your meal — WTF Lounge';
+    $activeNav = 'menu';
+    require __DIR__ . '/includes/header.php';
+}
+?>
+
+<?php if ($partial): ?>
+    <div class="meal-modal__head">
+      <div>
+        <h2 class="display-bubbly">Build your meal</h2>
+        <p class="body-md"><?= h($product['productname']) ?> · <?= formatPrice((float) $product['price']) ?></p>
+      </div>
+      <button type="button" class="meal-modal__close" aria-label="Close">&times;</button>
+    </div>
+<?php else: ?>
+    <div class="page-header">
+      <h1 class="display-bubbly" style="font-size:32px;">Build your meal</h1>
+      <p class="body-md"><?= h($product['productname']) ?> · <?= formatPrice((float) $product['price']) ?></p>
+    </div>
+
+    <?php if (!empty($errors)): ?>
+      <div class="container">
+        <div class="form-errors">
+          Please fix the following:
+          <ul><?php foreach ($errors as $err): ?><li><?= h($err) ?></li><?php endforeach; ?></ul>
+        </div>
+      </div>
+    <?php endif; ?>
 <?php endif; ?>
 
-<?php require __DIR__ . '/includes/admin_footer.php'; ?>
+    <form method="post" action="budget_meal.php?id=<?= (int) $product['product_id'] ?>" id="mealForm" class="meal-flow"
+          data-base="<?= h(number_format((float) $product['price'], 2, '.', '')) ?>">
+      <?= csrfField() ?>
+      <input type="hidden" name="product_id" value="<?= (int) $product['product_id'] ?>">
+
+      <ol class="meal-steps">
+        <?php foreach ($steps as $i => $label): ?>
+          <li class="<?= $i === 0 ? 'is-active' : '' ?>"><span><?= $i + 1 ?></span><?= h($label) ?></li>
+        <?php endforeach; ?>
+      </ol>
+
+      <?php if (!empty($options['meal'])): ?>
+        <section class="panel meal-step" data-step="meal" data-required="1">
+          <h2 class="panel__title">Choose your meal</h2>
+          <div class="meal-opts"><?php renderMealOptions($options['meal'], 'meal', 'radio', [$sel['meal']]); ?></div>
+        </section>
+      <?php endif; ?>
+
+      <?php if (!empty($options['rice'])): ?>
+        <section class="panel meal-step" data-step="rice" data-required="1">
+          <h2 class="panel__title">Choose your rice</h2>
+          <div class="meal-opts"><?php renderMealOptions($options['rice'], 'rice', 'radio', [$sel['rice']]); ?></div>
+        </section>
+      <?php endif; ?>
+
+      <?php if (!empty($options['drink'])): ?>
+        <section class="panel meal-step" data-step="drink">
+          <h2 class="panel__title">Choose your drink <small style="font-weight:400;">(optional)</small></h2>
+          <div class="meal-opts">
+            <label class="meal-opt">
+              <input type="radio" name="drink" value="0" data-price="0.00" data-label="No drink" <?= $sel['drink'] === 0 ? 'checked' : '' ?>>
+              <span class="meal-opt__name">No drink</span>
+              <span class="meal-opt__price">Skip the drink</span>
+            </label>
+            <?php renderMealOptions($options['drink'], 'drink', 'radio', [$sel['drink']]); ?>
+          </div>
+        </section>
+      <?php endif; ?>
+
+      <?php if (!empty($options['addon'])): ?>
+        <section class="panel meal-step" data-step="addon">
+          <h2 class="panel__title">Add-ons <small style="font-weight:400;">(optional)</small></h2>
+          <div class="meal-opts"><?php renderMealOptions($options['addon'], 'addons[]', 'checkbox', $sel['addons']); ?></div>
+        </section>
+      <?php endif; ?>
+
+      <section class="panel meal-step" data-step="review">
+        <h2 class="panel__title">Review your meal</h2>
+        <ul class="meal-review" id="mealReview"></ul>
+        <div class="field" style="margin-top:16px;">
+          <label for="mealQty">Quantity</label>
+          <input id="mealQty" name="qty" type="number" min="1" max="<?= (int) $maxQty ?>" value="<?= (int) $sel['qty'] ?>">
+        </div>
+        <div class="summary-total">
+          <span class="summary-total__label">Total</span>
+          <span class="summary-total__value" id="mealTotal"><?= formatPrice((float) $product['price']) ?></span>
+        </div>
+      </section>
+
+      <div class="meal-nav">
+        <a href="<?= h($backUrl) ?>" class="btn btn--outline" id="mealCancel">Cancel</a>
+        <button type="button" class="btn btn--secondary" id="mealBack" hidden>Back</button>
+        <button type="button" class="btn btn--primary" id="mealNext" hidden>Next</button>
+        <button type="submit" class="btn btn--primary" id="mealSubmit">Add to cart</button>
+      </div>
+    </form>
+
+<?php if (!$partial): ?>
+    <script src="js/budget-meal.js" defer></script>
+<?php require __DIR__ . '/includes/footer.php'; ?>
+<?php endif; ?>
