@@ -137,15 +137,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <label for="address">Address</label>
         <textarea id="address" name="address" required><?= h($_POST['address'] ?? '') ?></textarea>
       </div>
+      <div class="auth__field">
+  <label for="password">Password</label>
       <div class="auth__password">
   <input type="password" id="password" name="password" required minlength="8">
   <button type="button" class="auth__toggle" data-toggle-password="password" aria-label="Show password">Show</button>
 </div>
-
+      </div>
+      <div class="auth__field">
+  <label for="password">Confirm Password</label>
 <div class="auth__password">
   <input type="password" id="confirm_password" name="confirm_password" required minlength="8">
   <button type="button" class="auth__toggle" data-toggle-password="confirm_password" aria-label="Show password">Show</button>
 </div>
+      </div>
       <button type="submit" class="btn btn--primary btn--lg">Register</button>
     </form>
     <p class="auth__footer">
