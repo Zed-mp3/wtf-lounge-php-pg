@@ -8,6 +8,16 @@
 
 <!-- Mobile menu toggle for admin sidebar -->
 <script>
+
+document.querySelectorAll('[data-toggle-password]').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var input = document.getElementById(btn.dataset.togglePassword);
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.textContent = show ? 'Hide' : 'Show';
+    btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  });
+});
 document.addEventListener('DOMContentLoaded', function() {
   // For mobile: toggle sidebar if needed
   const sidebar = document.querySelector('.admin-sidebar');
