@@ -80,9 +80,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <input type="tel" id="phone" name="phone" required value="<?= h($_POST['phone'] ?? '') ?>" placeholder="e.g., 0917-123-4567">
       </div>
       <div class="auth__field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" required>
-      </div>
+  <label for="password">Password</label>
+  <div class="auth__password">
+    <input type="password" id="password" name="password" required>
+    <button type="button" class="auth__toggle" data-toggle-password="password" aria-label="Show password">Show</button>
+  </div>
+</div>
       <button type="submit" class="btn btn--primary btn--lg">Log in</button>
     </form>
     <p class="auth__footer"><a href="forgot_password.php">Forgot your password?</a></p>
