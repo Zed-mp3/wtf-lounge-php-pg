@@ -6,11 +6,12 @@ require_once __DIR__ . '/../includes/functions.php';
 
 requireAdmin();
 
-$stepLabels = ['rice' => 'Rice', 'drink' => 'Drinks', 'addon' => 'Add-ons (optional)'];
+$stepLabels = ['meal' => 'Meals', 'rice' => 'Rice', 'drink' => 'Drinks', 'addon' => 'Add-ons (optional)'];
 $stepHints = [
-    'rice'  => 'Step 1 — customer must pick one. Extra charge 0 = included in the budget meal price.',
-    'drink' => 'Step 2 — customer must pick one. Extra charge 0 = included in the budget meal price.',
-    'addon' => 'Step 3 — optional, customer can pick any number. The extra charge is added to the meal price.',
+    'meal'  => 'Step 1 — customer must pick one (e.g. products from your Meals category). Extra charge 0 = included in the budget meal price.',
+    'rice'  => 'Step 2 — customer must pick one. Extra charge 0 = included in the budget meal price.',
+    'drink' => 'Step 3 — optional, customers also see a "No drink" choice. Extra charge 0 = included in the budget meal price.',
+    'addon' => 'Step 4 — optional, customer can pick any number. The extra charge is added to the meal price.',
 ];
 
 // ---- Handle changes (POST) ----
@@ -65,7 +66,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ---- Load data ----
-$grouped = ['rice' => [], 'drink' => [], 'addon' => []];
+$grouped = ['meal' => [], 'rice' => [], 'drink' => [], 'addon' => []];
 $setupNeeded = false;
 try {
     $rows = $pdo->query(
@@ -217,7 +218,7 @@ require __DIR__ . '/includes/admin_header.php';
                     </tr>
                 <?php endforeach; ?>
                 <?php if (empty($grouped[$key])): ?>
-                    <tr><td colspan="7" style="text-align:center;padding:24px;">Nothing here yet. Customers skip this step until you add an option<?= $key === 'addon' ? '' : ' (so rice/drink are not asked)' ?>.</td></tr>
+                    <tr><td colspan="7" style="text-align:center;padding:24px;">Nothing here yet. Customers skip this step until you add an option.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -272,10 +273,24 @@ require __DIR__ . '/includes/admin_header.php';
     }
 
     priceInp.addEventListener('input', function () { priceTouched = true; });
-    stepSel.addEventListener('change', function () { priceTouched = false; suggestPrice(); });
+    // Jump to the matching category (Meals / Drinks / Add ons) when the step changes.
+    function preselectCategory() {
+        var wanted = { meal: 'meals', drink: 'drinks', addon: 'add ons' }[stepSel.value];
+        if (!wanted) { return; }
+        for (var i = 0; i < catSel.options.length; i++) {
+            if (catSel.options[i].textContent.trim().toLowerCase() === wanted) {
+                catSel.value = catSel.options[i].value;
+                fillProducts();
+                return;
+            }
+        }
+    }
+
+    stepSel.addEventListener('change', function () { priceTouched = false; preselectCategory(); suggestPrice(); });
     catSel.addEventListener('change', fillProducts);
     prodSel.addEventListener('change', function () { priceTouched = false; onProductChange(); });
     fillProducts();
+    preselectCategory();
 })();
 </script>
 
