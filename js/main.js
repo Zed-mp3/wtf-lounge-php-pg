@@ -236,37 +236,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // =========================================
-    // TOAST NOTIFICATIONS
-    // =========================================
-    function showToast(message, duration) {
-        duration = duration || 3000;
-        let toast = document.querySelector('.toast');
-        
-        if (!toast) {
-            toast = document.createElement('div');
-            toast.className = 'toast';
-            document.body.appendChild(toast);
-        }
-        
-        toast.textContent = message;
-        toast.classList.add('is-visible');
-        
-        setTimeout(function() {
-            toast.classList.remove('is-visible');
-        }, duration);
-    }
-
-    // Check for flash messages and show as toast
-    const flashElement = document.querySelector('.flash-msg');
-    if (flashElement) {
-        const message = flashElement.textContent;
-        showToast(message, 4000);
-        // Remove the flash element after showing toast
-        setTimeout(function() {
-            flashElement.style.display = 'none';
-        }, 4000);
-    }
+   
 
     // =========================================
     // CART QUANTITY UPDATES (AJAX)
