@@ -482,6 +482,23 @@ function getMealOptions(PDO $pdo): array
     return $groups;
 }
 
+/**
+ * How many products the customer must pick in a step (1 = single, 2 = double, ...).
+ * Set by the admin on admin/meal_options.php and stored in meal_step_settings.
+ * Falls back to 1 if the table is missing or the step has no row yet.
+ */
+function getMealStepLimit(PDO $pdo, string $step = 'meal'): int
+{
+    try {
+        $stmt = $pdo->prepare('SELECT max_choices FROM meal_step_settings WHERE step = ?');
+        $stmt->execute([$step]);
+        $n = $stmt->fetchColumn();
+        return $n === false ? 1 : max(1, min(3, (int) $n));
+    } catch (PDOException $e) {
+        return 1;
+    }
+}
+
 function comboData(): array
 {
     if (!isset($_SESSION['combos']) || !is_array($_SESSION['combos'])) {
@@ -495,27 +512,33 @@ function comboClear(): void
     $_SESSION['combos'] = [];
 }
 
-function comboKey(int $product_id, int $rice, int $drink, array $addons, int $meal = 0): string
+/** $meal = one meal option id, or an array of ids when the Meals step allows more than one. */
+function comboKey(int $product_id, int $rice, int $drink, array $addons, $meal = 0): string
 {
     sort($addons);
+    $meals = array_values(array_filter(array_map('intval', (array) $meal)));
+    sort($meals);
     $raw = $product_id . '|' . $rice . '|' . $drink . '|' . implode(',', $addons);
-    if ($meal > 0) {
-        $raw .= '|m' . $meal; // carts made before the "Meals" step keep their old keys
+    if ($meals) {
+        $raw .= '|m' . implode(',', $meals); // a single meal keeps the same key as before
     }
     return substr(md5($raw), 0, 12);
 }
 
 /** Adds one customised meal (same choices merge into one line). Returns the line key. */
-function comboAdd(int $product_id, int $rice, int $drink, array $addons, int $qty, int $maxQty, int $meal = 0): string
+function comboAdd(int $product_id, int $rice, int $drink, array $addons, int $qty, int $maxQty, $meal = 0): string
 {
     $addons = array_values(array_unique(array_map('intval', $addons)));
     sort($addons);
-    $key = comboKey($product_id, $rice, $drink, $addons, $meal);
+    $meals = array_values(array_unique(array_filter(array_map('intval', (array) $meal))));
+    sort($meals);
+    $key = comboKey($product_id, $rice, $drink, $addons, $meals);
     $combos = comboData();
     $current = $combos[$key]['qty'] ?? 0;
     $combos[$key] = [
         'product_id' => $product_id,
-        'meal'       => $meal,
+        'meal'       => $meals[0] ?? 0,   // first pick (kept for older carts)
+        'meals'      => $meals,           // every pick (single or double)
         'rice'       => $rice,
         'drink'      => $drink,
         'addons'     => $addons,
@@ -544,6 +567,16 @@ function comboRemove(string $key): void
     comboSetQty($key, 0);
 }
 
+/** Meal option ids of a cart combo (supports old carts that stored a single 'meal'). */
+function comboMealIds(array $c): array
+{
+    if (isset($c['meals']) && is_array($c['meals'])) {
+        return array_values(array_filter(array_map('intval', $c['meals'])));
+    }
+    $m = (int) ($c['meal'] ?? 0);
+    return $m > 0 ? [$m] : [];
+}
+
 /** Combo lines shaped like plain cart lines (+ line_key), so cart/checkout can treat them alike. */
 function comboLines(PDO $pdo): array
 {
@@ -553,7 +586,9 @@ function comboLines(PDO $pdo): array
     }
     $ids = [];
     foreach ($combos as $c) {
-        $ids[] = (int) ($c['meal'] ?? 0);
+        foreach (comboMealIds($c) as $m) {
+            $ids[] = $m;
+        }
         $ids[] = (int) $c['rice'];
         $ids[] = (int) $c['drink'];
         foreach ($c['addons'] as $a) {
@@ -586,7 +621,20 @@ function comboLines(PDO $pdo): array
         $parts = [];
         $optProducts = [];
         $broken = false;
-        foreach (['meal', 'rice', 'drink'] as $slot) {
+        $mealNames = [];
+        foreach (comboMealIds($c) as $id) {
+            if (!isset($opts[$id])) {
+                $broken = true;
+                break;
+            }
+            $unit += (float) $opts[$id]['extra_price'];
+            $mealNames[] = $opts[$id]['name'];
+            $optProducts[] = ['product_id' => (int) $opts[$id]['product_id'], 'name' => $opts[$id]['name'], 'role' => 'meal'];
+        }
+        if ($mealNames) {
+            $parts[] = implode(' + ', $mealNames);
+        }
+        foreach ($broken ? [] : ['rice', 'drink'] as $slot) {
             $id = (int) ($c[$slot] ?? 0);
             if ($id === 0) {
                 continue;
