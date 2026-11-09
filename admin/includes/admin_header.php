@@ -77,7 +77,14 @@ $flash = flashGet();
       </a>
     </nav>
     <div class="admin-sidebar__footer">
-      <a href="../menu.php">
+      <a href="profile.php" class="<?= $activeAdminNav === 'profile' ? 'active' : '' ?>">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="8" r="4"/>
+          <path d="M4 21a8 8 0 0 1 16 0"/>
+        </svg>
+        My Profile
+      </a>
+      <a href="../menu.php" style="margin-top: 8px;">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 12h18"/>
           <path d="M18 5l7 7-7 7"/>
