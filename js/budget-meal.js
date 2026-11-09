@@ -60,7 +60,23 @@
 
         function stepIsValid(step) {
             if (step.getAttribute('data-required') !== '1') { return true; }
-            return checkedIn(step).length > 0;
+            var need = parseInt(step.getAttribute('data-count'), 10) || 1;
+            return checkedIn(step).length >= need;
+        }
+
+        // Steps that allow several picks (e.g. a double meal): once the limit is reached,
+        // lock the remaining cards so the customer cannot pick more.
+        function applyLimits() {
+            steps.forEach(function (step) {
+                var max = parseInt(step.getAttribute('data-count'), 10) || 0;
+                var boxes = step.querySelectorAll('input[type="checkbox"]');
+                if (max < 2 || !boxes.length) { return; }
+                var full = step.querySelectorAll('input[type="checkbox"]:checked').length >= max;
+                Array.prototype.forEach.call(boxes, function (b) {
+                    b.disabled = full && !b.checked;
+                    if (b.parentNode) { b.parentNode.style.opacity = b.disabled ? '0.45' : ''; }
+                });
+            });
         }
 
         function refreshNext() {
@@ -100,6 +116,7 @@
             cancelBtn.addEventListener('click', function (e) { e.preventDefault(); closeFn(); });
         }
         form.addEventListener('change', function () {
+            applyLimits();
             refreshNext();
             if (current === steps.length - 1) { renderReview(); }
         });
@@ -112,6 +129,7 @@
             }
         });
 
+        applyLimits();
         show(0, true);
     }
 
