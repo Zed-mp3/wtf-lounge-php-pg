@@ -36,22 +36,35 @@ if ($stock <= 0) {
 }
 
 $options = getMealOptions($pdo);
+// How many meals the customer picks (1 = single, 2 = double...), but never more than are available.
+$mealLimit = max(1, min(getMealStepLimit($pdo, 'meal'), max(1, count($options['meal']))));
 $maxQty = min($stock, 10);
 $errors = [];
-$sel = ['meal' => 0, 'rice' => 0, 'drink' => 0, 'addons' => [], 'qty' => 1];
+$sel = ['meal' => [], 'rice' => 0, 'drink' => 0, 'addons' => [], 'qty' => 1];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfVerify();
 
-    $sel['meal']   = (int) ($_POST['meal'] ?? 0);
+    // 'meal' arrives as a single value (radio) or an array (meal[] checkboxes).
+    $sel['meal']   = array_values(array_unique(array_filter(array_map('intval', (array) ($_POST['meal'] ?? [])))));
     $sel['rice']   = (int) ($_POST['rice'] ?? 0);
     $sel['drink']  = (int) ($_POST['drink'] ?? 0);
     $sel['addons'] = array_values(array_unique(array_map('intval', (array) ($_POST['addons'] ?? []))));
     $sel['qty']    = max(1, min((int) ($_POST['qty'] ?? 1), $maxQty));
 
     // A step is only required when the admin has set up options for it.
-    if (!empty($options['meal']) && !isset($options['meal'][$sel['meal']])) {
-        $errors[] = 'Please choose your meal.';
+    if (!empty($options['meal'])) {
+        $mealOk = count($sel['meal']) === $mealLimit;
+        foreach ($sel['meal'] as $m) {
+            if (!isset($options['meal'][$m])) {
+                $mealOk = false;
+            }
+        }
+        if (!$mealOk) {
+            $errors[] = $mealLimit > 1
+                ? 'Please choose exactly ' . $mealLimit . ' different meals.'
+                : 'Please choose your meal.';
+        }
     }
     if (!empty($options['rice']) && !isset($options['rice'][$sel['rice']])) {
         $errors[] = 'Please choose your rice.';
@@ -70,8 +83,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($errors)) {
         // Never take more than the meal OR any chosen option has in stock.
         $chosen = [];
-        if (!empty($options['meal'])) {
-            $chosen[] = $options['meal'][$sel['meal']];
+        foreach ($sel['meal'] as $m) {
+            $chosen[] = $options['meal'][$m];
         }
         if (!empty($options['rice'])) {
             $chosen[] = $options['rice'][$sel['rice']];
@@ -94,7 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $sel['addons'],
             max(1, min($sel['qty'], $cap)),
             $cap,
-            empty($options['meal']) ? 0 : $sel['meal']
+            empty($options['meal']) ? [] : $sel['meal']
         );
         flashSet($product['productname'] . ' meal added to cart.');
         header('Location: ' . $backUrl);
@@ -169,9 +182,18 @@ if (!$partial) {
       </ol>
 
       <?php if (!empty($options['meal'])): ?>
-        <section class="panel meal-step" data-step="meal" data-required="1">
-          <h2 class="panel__title">Choose your meal</h2>
-          <div class="meal-opts"><?php renderMealOptions($options['meal'], 'meal', 'radio', [$sel['meal']]); ?></div>
+        <section class="panel meal-step" data-step="meal" data-required="1" data-count="<?= (int) $mealLimit ?>">
+          <h2 class="panel__title"><?= $mealLimit > 1 ? 'Choose ' . (int) $mealLimit . ' meals' : 'Choose your meal' ?></h2>
+          <?php if ($mealLimit > 1): ?>
+            <p class="body-md" style="margin:0 0 12px;">Double meal: pick <?= (int) $mealLimit ?> different meals. Each one's extra charge is added.</p>
+          <?php endif; ?>
+          <div class="meal-opts">
+            <?php if ($mealLimit > 1): ?>
+              <?php renderMealOptions($options['meal'], 'meal[]', 'checkbox', $sel['meal']); ?>
+            <?php else: ?>
+              <?php renderMealOptions($options['meal'], 'meal', 'radio', $sel['meal']); ?>
+            <?php endif; ?>
+          </div>
         </section>
       <?php endif; ?>
 
