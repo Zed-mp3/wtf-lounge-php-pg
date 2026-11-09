@@ -8,7 +8,7 @@ requireAdmin();
 
 $stepLabels = ['meal' => 'Meals', 'rice' => 'Rice', 'drink' => 'Drinks', 'addon' => 'Add-ons (optional)'];
 $stepHints = [
-    'meal'  => 'Step 1 — customer must pick one (e.g. products from your Meals category). Extra charge 0 = included in the budget meal price.',
+    'meal'  => 'Step 1 — customer must pick the number set below (e.g. products from your Meals category). Extra charge 0 = included in the budget meal price; with Double, each picked meal adds its own extra charge.',
     'rice'  => 'Step 2 — customer must pick one. Extra charge 0 = included in the budget meal price.',
     'drink' => 'Step 3 — optional, customers also see a "No drink" choice. Extra charge 0 = included in the budget meal price.',
     'addon' => 'Step 4 — optional, customer can pick any number. The extra charge is added to the meal price.',
@@ -49,6 +49,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->execute([$extra, $isActive, $optionId]);
                 flashSet('Option updated.');
             }
+        } elseif ($action === 'save_limit') {
+            // How many meals a customer picks in the Meals step: 1 = single, 2 = double, 3 = triple.
+            $limit = max(1, min(3, (int) ($_POST['max_choices'] ?? 1)));
+            $stmt = $pdo->prepare(
+                'INSERT INTO meal_step_settings (step, max_choices) VALUES (\'meal\', ?)
+                 ON CONFLICT (step) DO UPDATE SET max_choices = EXCLUDED.max_choices'
+            );
+            $stmt->execute([$limit]);
+            flashSet('Customers must now pick ' . $limit . ' meal' . ($limit > 1 ? 's' : '') . '.');
         } elseif ($action === 'delete_option') {
             $optionId = (int) ($_POST['option_id'] ?? 0);
             if ($optionId > 0) {
@@ -85,6 +94,7 @@ try {
     $setupNeeded = true; // meal_options table (or its product_id column) is missing
 }
 
+$mealLimit = getMealStepLimit($pdo, 'meal');
 $categories = getCategories($pdo);
 // Products the admin can pick from: active ones, excluding the budget meals themselves.
 $pickable = $pdo->query(
@@ -168,6 +178,19 @@ require __DIR__ . '/includes/admin_header.php';
 <?php foreach ($stepLabels as $key => $label): ?>
     <h2 class="panel__title" style="margin-top:24px; margin-bottom:4px;"><?= h($label) ?></h2>
     <p class="body-md" style="margin:0 0 12px;"><?= h($stepHints[$key]) ?></p>
+    <?php if ($key === 'meal'): ?>
+        <form method="post" action="meal_options.php" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 12px;">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="save_limit">
+            <label for="maxChoices" style="font-weight:600;">Customer can pick</label>
+            <select name="max_choices" id="maxChoices">
+                <option value="1" <?= $mealLimit === 1 ? 'selected' : '' ?>>Single (1 meal)</option>
+                <option value="2" <?= $mealLimit === 2 ? 'selected' : '' ?>>Double (2 meals)</option>
+                <option value="3" <?= $mealLimit === 3 ? 'selected' : '' ?>>Triple (3 meals)</option>
+            </select>
+            <button type="submit" class="btn btn--secondary" style="padding:6px 16px;">Save</button>
+        </form>
+    <?php endif; ?>
     <div class="table-scroll">
         <table class="admin-table">
             <thead>
