@@ -368,6 +368,82 @@ function setCustomerPassword(PDO $pdo, int $customer_id, string $plainPassword):
     return $stmt->execute([$hash, $customer_id]);
 }
 
+/**
+ * Updates the logged-in customer's own profile fields.
+ * Throws RuntimeException with a user-friendly message on validation failure.
+ * $data keys: fullname, phone, address, email (email only applied when the account has none yet).
+ */
+function updateOwnProfile(PDO $pdo, int $customer_id, array $data): void
+{
+    $current = getCustomerById($pdo, $customer_id);
+    if (!$current) {
+        throw new RuntimeException('Account not found.');
+    }
+
+    $fullname = trim((string) ($data['fullname'] ?? ''));
+    $phone    = trim((string) ($data['phone'] ?? ''));
+    $address  = trim((string) ($data['address'] ?? ''));
+
+    if ($fullname === '') {
+        throw new RuntimeException('Full name is required.');
+    }
+    if ($phone === '' || !preg_match('/^[\d\-\+\s]{7,20}$/', $phone)) {
+        throw new RuntimeException('Enter a valid phone number.');
+    }
+    if ($address === '') {
+        throw new RuntimeException('Address is required.');
+    }
+
+    $stmt = $pdo->prepare('SELECT 1 FROM customers WHERE phone = ? AND customer_id <> ?');
+    $stmt->execute([$phone, $customer_id]);
+    if ($stmt->fetch()) {
+        throw new RuntimeException('That phone number is already used by another account.');
+    }
+
+    // Email is verified by emailed code at sign-up, so it is only editable here
+    // when the account has no email on file yet (e.g. legacy accounts).
+    $email = $current['email'];
+    if (empty($current['email'])) {
+        $newEmail = strtolower(trim((string) ($data['email'] ?? '')));
+        if ($newEmail !== '') {
+            if (strlen($newEmail) > 255 || !filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                throw new RuntimeException('Enter a valid email address.');
+            }
+            $stmt = $pdo->prepare('SELECT 1 FROM customers WHERE lower(email) = ? AND customer_id <> ?');
+            $stmt->execute([$newEmail, $customer_id]);
+            if ($stmt->fetch()) {
+                throw new RuntimeException('That email address is already registered.');
+            }
+            $email = $newEmail;
+        }
+    }
+
+    $stmt = $pdo->prepare('UPDATE customers SET fullname = ?, phone = ?, address = ?, email = ? WHERE customer_id = ?');
+    $stmt->execute([$fullname, $phone, $address, $email, $customer_id]);
+
+    $_SESSION['fullname'] = $fullname;
+    $_SESSION['phone'] = $phone;
+}
+
+/** Changes the logged-in customer's own password after checking the current one. */
+function changeOwnPassword(PDO $pdo, int $customer_id, string $current, string $new, string $confirm): void
+{
+    $row = getCustomerById($pdo, $customer_id);
+    if (!$row) {
+        throw new RuntimeException('Account not found.');
+    }
+    if ($row['password_hash'] === null || !password_verify($current, $row['password_hash'])) {
+        throw new RuntimeException('Your current password is incorrect.');
+    }
+    if (strlen($new) < 8) {
+        throw new RuntimeException('New password must be at least 8 characters.');
+    }
+    if ($new !== $confirm) {
+        throw new RuntimeException('New passwords do not match.');
+    }
+    setCustomerPassword($pdo, $customer_id, $new);
+}
+
 /* ---------- flash messages (simple session-based) ---------- */
 
 function flashSet(string $message): void
@@ -400,6 +476,58 @@ if (!defined('ORDER_STATUSES')) {
 /**
  * Get products with category name
  */
+/**
+ * Admin-only product list. Unlike getProducts() (customer menu, active items only),
+ * this includes inactive products so admins can find and re-activate them.
+ * $filters keys: q (name/category/meta), category (category_id), status (active|inactive),
+ * stock (in|low|out).
+ */
+function getAdminProducts(PDO $pdo, array $filters = []): array
+{
+    $sql = 'SELECT p.*, c.categoryname, ' . imageColumnsSql('p.product_id') . '
+            FROM products p
+            LEFT JOIN categories c ON c.category_id = p.category_id
+            WHERE 1=1';
+    $params = [];
+
+    $q = trim((string) ($filters['q'] ?? ''));
+    if ($q !== '') {
+        $sql .= ' AND (p.productname ILIKE ? OR c.categoryname ILIKE ? OR p.default_meta ILIKE ?)';
+        $params[] = "%$q%";
+        $params[] = "%$q%";
+        $params[] = "%$q%";
+    }
+
+    $category = (string) ($filters['category'] ?? '');
+    if ($category === 'none') {
+        $sql .= ' AND p.category_id IS NULL';
+    } elseif ($category !== '' && ctype_digit($category)) {
+        $sql .= ' AND p.category_id = ?';
+        $params[] = (int) $category;
+    }
+
+    $status = (string) ($filters['status'] ?? '');
+    if ($status === 'active') {
+        $sql .= ' AND p.is_active';
+    } elseif ($status === 'inactive') {
+        $sql .= ' AND NOT p.is_active';
+    }
+
+    $stock = (string) ($filters['stock'] ?? '');
+    if ($stock === 'out') {
+        $sql .= ' AND p.stock <= 0';
+    } elseif ($stock === 'low') {
+        $sql .= ' AND p.stock > 0 AND p.stock <= ' . (int) LOW_STOCK_THRESHOLD;
+    } elseif ($stock === 'in') {
+        $sql .= ' AND p.stock > ' . (int) LOW_STOCK_THRESHOLD;
+    }
+
+    $sql .= ' ORDER BY p.product_id';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return attachProductImages($stmt->fetchAll());
+}
+
 function getProductsWithCategory($pdo, $search = null) {
     $sql = "
         SELECT p.*, c.categoryname, " . imageColumnsSql('p.product_id') . "
