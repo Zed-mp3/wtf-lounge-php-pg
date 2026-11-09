@@ -61,6 +61,25 @@ function saveProductImage(PDO $pdo, int $productId, array $img): void
     }
 }
 
+/** Current product-list filters, taken from the query string. */
+function menuFilters(): array
+{
+    $f = [
+        'q'        => trim((string) ($_GET['q'] ?? '')),
+        'category' => (string) ($_GET['category'] ?? ''),
+        'status'   => (string) ($_GET['status'] ?? ''),
+        'stock'    => (string) ($_GET['stock'] ?? ''),
+    ];
+    return array_filter($f, fn($v) => $v !== '');
+}
+
+/** Query string that keeps the active filters (optionally plus extra params). */
+function menuQs(array $extra = []): string
+{
+    $qs = http_build_query(array_merge($extra, menuFilters()));
+    return $qs === '' ? '' : '?' . $qs;
+}
+
 // Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrfVerify();
@@ -99,7 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             flashSet('Please fill in all required fields.');
         }
-        header('Location: menu.php');
+        header('Location: menu.php' . menuQs());
         exit;
     }
 
@@ -140,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             flashSet('Please fill in all required fields.');
         }
-        header('Location: menu.php');
+        header('Location: menu.php' . menuQs());
         exit;
     }
 
@@ -155,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flashSet('Error deleting product: ' . $e->getMessage());
             }
         }
-        header('Location: menu.php');
+        header('Location: menu.php' . menuQs());
         exit;
     }
 
@@ -172,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             flashSet('Category name is required.');
         }
-        header('Location: menu.php');
+        header('Location: menu.php' . menuQs());
         exit;
     }
 
@@ -196,14 +215,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flashSet('Error deleting category: ' . $e->getMessage());
             }
         }
-        header('Location: menu.php');
+        header('Location: menu.php' . menuQs());
         exit;
     }
 }
 
 // Get data
 $categories = getCategories($pdo);
-$products = getProducts($pdo, null, null);
+$filters = menuFilters();
+$products = getAdminProducts($pdo, $filters);
+$totalProducts = (int) $pdo->query('SELECT COUNT(*) FROM products')->fetchColumn();
+$hasFilters = !empty($filters);
 $editProduct = null;
 $editProductID = isset($_GET['edit']) ? (int) $_GET['edit'] : 0;
 
@@ -230,7 +252,7 @@ require __DIR__ . '/includes/admin_header.php';
     <h2 style="font-family:'Plus Jakarta Sans',sans-serif; font-weight:700; font-size:18px; margin:0 0 12px;">
         <?= $editProduct ? 'Edit Product' : 'Add New Product' ?>
     </h2>
-    <form method="post" action="menu.php" enctype="multipart/form-data" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+    <form method="post" action="menu.php<?= h(menuQs()) ?>" enctype="multipart/form-data" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
         <?= csrfField() ?>
         <?php if ($editProduct): ?>
             <input type="hidden" name="action" value="edit_product">
@@ -308,7 +330,7 @@ require __DIR__ . '/includes/admin_header.php';
                 <?= $editProduct ? 'Update Product' : 'Add Product' ?>
             </button>
             <?php if ($editProduct): ?>
-                <a href="menu.php" class="btn btn--secondary">Cancel Edit</a>
+                <a href="menu.php<?= h(menuQs()) ?>" class="btn btn--secondary">Cancel Edit</a>
             <?php endif; ?>
         </div>
     </form>
@@ -326,7 +348,39 @@ require __DIR__ . '/includes/admin_header.php';
 </div>
 
 <!-- Products Table -->
-<h2 class="panel__title" style="margin-top:24px; margin-bottom:16px;">All Products</h2>
+<h2 class="panel__title" style="margin-top:24px; margin-bottom:16px;" id="all-products">All Products</h2>
+
+<!-- Search + filters -->
+<form method="get" action="menu.php#all-products" class="admin-toolbar" role="search">
+    <input type="text" name="q" value="<?= h($filters['q'] ?? '') ?>" placeholder="Search name, category, or meta..." aria-label="Search products">
+    <select name="category" aria-label="Filter by category" onchange="this.form.submit()">
+        <option value="">All categories</option>
+        <?php foreach ($categories as $cat): ?>
+            <option value="<?= (int) $cat['category_id'] ?>" <?= ($filters['category'] ?? '') === (string) $cat['category_id'] ? 'selected' : '' ?>>
+                <?= h($cat['categoryname']) ?>
+            </option>
+        <?php endforeach; ?>
+        <option value="none" <?= ($filters['category'] ?? '') === 'none' ? 'selected' : '' ?>>Uncategorized</option>
+    </select>
+    <select name="status" aria-label="Filter by status" onchange="this.form.submit()">
+        <option value="">Any status</option>
+        <option value="active" <?= ($filters['status'] ?? '') === 'active' ? 'selected' : '' ?>>Active</option>
+        <option value="inactive" <?= ($filters['status'] ?? '') === 'inactive' ? 'selected' : '' ?>>Inactive</option>
+    </select>
+    <select name="stock" aria-label="Filter by stock" onchange="this.form.submit()">
+        <option value="">Any stock</option>
+        <option value="in" <?= ($filters['stock'] ?? '') === 'in' ? 'selected' : '' ?>>In stock</option>
+        <option value="low" <?= ($filters['stock'] ?? '') === 'low' ? 'selected' : '' ?>>Low stock</option>
+        <option value="out" <?= ($filters['stock'] ?? '') === 'out' ? 'selected' : '' ?>>Out of stock</option>
+    </select>
+    <button type="submit" class="btn btn--primary">Search</button>
+    <?php if ($hasFilters): ?>
+        <a href="menu.php#all-products" class="btn btn--secondary">Clear</a>
+    <?php endif; ?>
+</form>
+<p class="body-md" style="margin:-8px 0 12px; font-size:13px;">
+    Showing <?= count($products) ?> of <?= $totalProducts ?> product<?= $totalProducts === 1 ? '' : 's' ?>.
+</p>
 <div class="table-scroll">
     <table class="admin-table">
         <thead>
@@ -367,8 +421,8 @@ require __DIR__ . '/includes/admin_header.php';
                     </td>
                     <td>
                         <div class="admin-actions">
-                            <a href="menu.php?edit=<?= (int) $p['product_id'] ?>" class="btn btn--secondary" style="padding:4px 12px; font-size:11px;">Edit</a>
-                            <form method="post" action="menu.php" style="display:inline;">
+                            <a href="menu.php<?= h(menuQs(['edit' => (int) $p['product_id']])) ?>" class="btn btn--secondary" style="padding:4px 12px; font-size:11px;">Edit</a>
+                            <form method="post" action="menu.php<?= h(menuQs()) ?>" style="display:inline;">
                                 <?= csrfField() ?>
                                 <input type="hidden" name="action" value="delete_product">
                                 <input type="hidden" name="product_id" value="<?= (int) $p['product_id'] ?>">
@@ -381,7 +435,7 @@ require __DIR__ . '/includes/admin_header.php';
                 </tr>
             <?php endforeach; ?>
             <?php if (empty($products)): ?>
-                <tr><td colspan="8" style="text-align:center;padding:40px;">No products found.</td></tr>
+                <tr><td colspan="8" style="text-align:center;padding:40px;"><?= $hasFilters ? 'No products match your search or filters.' : 'No products found.' ?></td></tr>
             <?php endif; ?>
         </tbody>
     </table>
