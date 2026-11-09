@@ -42,7 +42,7 @@ $admin = isAdmin();
       <div class="navbar__right">
         <?php if ($loggedIn): ?>
           <div class="account-menu">
-            <span class="account-menu__name">Hi, <?= h($_SESSION['fullname']) ?></span>
+            <a href="profile.php" class="account-menu__name account-menu__profile<?= $activeNav === 'profile' ? ' active' : '' ?>" title="My profile">Hi, <?= h($_SESSION['fullname']) ?></a>
             <span class="account-menu__divider">|</span>
             <a href="logout.php">Log out</a>
           </div>
@@ -73,6 +73,7 @@ $admin = isAdmin();
     <hr class="side-nav__divider">
     <?php if ($loggedIn): ?>
       <div class="side-nav__account">Signed in as <?= h($_SESSION['fullname']) ?></div>
+      <a href="profile.php" class="<?= $activeNav === 'profile' ? 'active' : '' ?>">My Profile</a>
       <a href="logout.php">Log out</a>
     <?php else: ?>
       <a href="login.php">Log in</a>
