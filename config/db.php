@@ -28,8 +28,12 @@ try {
             PDO::ATTR_EMULATE_PREPARES   => false,
         ]
     );
+
+    // Make CURRENT_TIMESTAMP / now() use Philippine time for this session
+    $pdo->exec("SET TIME ZONE 'Asia/Manila'");
 } catch (PDOException $e) {
+    error_log('Database connection failed: ' . $e->getMessage());
     http_response_code(500);
     $detail = APP_DEBUG ? ' (' . $e->getMessage() . ')' : '';
-    die('Database connection failed. Make sure PostgreSQL is running and sql/db_shop.sql has been loaded.' . $detail);
+    die('Database connection failed. Check the Supabase pooler settings, password, PHP PostgreSQL driver, and network connection.' . $detail);
 }
