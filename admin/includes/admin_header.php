@@ -19,12 +19,24 @@ $flash = flashGet();
 
 <!-- Admin Layout -->
 <div class="admin-layout">
-  
-  <!-- Admin Sidebar -->
-  <aside class="admin-sidebar">
+
+  <!-- Mobile top bar with hamburger (hidden on desktop) -->
+  <header class="admin-topbar">
+    <button type="button" class="admin-hamburger" id="navToggle" aria-label="Open admin menu" aria-expanded="false" aria-controls="sideNav">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/>
+      </svg>
+    </button>
+    <a href="index.php" class="admin-topbar__brand">WTF Lounge <small>Admin</small></a>
+  </header>
+  <div class="admin-backdrop" id="sideNavBackdrop"></div>
+
+  <!-- Admin Sidebar (off-canvas drawer on mobile) -->
+  <aside class="admin-sidebar" id="sideNav">
     <div class="admin-sidebar__brand">
       <a href="index.php">WTF Lounge</a>
       <small>Admin Panel</small>
+      <button type="button" class="admin-sidebar__close" id="navClose" aria-label="Close admin menu">&times;</button>
     </div>
     <nav class="admin-sidebar__nav">
       <a href="index.php" class="<?= $activeAdminNav === 'dashboard' ? 'active' : '' ?>">
