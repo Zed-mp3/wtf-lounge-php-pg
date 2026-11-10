@@ -1,50 +1,90 @@
-<link rel="stylesheet" href="../css/style.css?v=<?= (int) @filemtime(__DIR__ . '/../../css/style.css') ?>">
+<?php
+/**
+ * Shared page shell (top half). Expects $pageTitle to be set by the
+ * including page. $activeNav (optional) highlights a nav link.
+ * Assumes configureSession()/auth.php/functions.php already loaded.
+ */
+$pageTitle = $pageTitle ?? 'WTF Lounge';
+$activeNav = $activeNav ?? '';
+$cartCount = cartCount();
+$flash = flashGet();
+$loggedIn = isLoggedIn();
+$admin = isAdmin();
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title><?= h($pageTitle) ?></title>
+<link rel="stylesheet" href="css/style.css?v=<?= (int) @filemtime(__DIR__ . '/../css/style.css') ?>">
+<script src="js/main.js" defer></script>
 </head>
 <body>
+<div class="page">
 
-<!-- Mobile: same navbar + slide-out menu as the customer site (hidden on desktop) -->
-<header class="navbar admin-mobile-bar">
-  <div class="container navbar__row">
-    <button class="hamburger" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="sideNav">
-      <span></span><span></span><span></span>
-    </button>
+  <header class="navbar">
+    <div class="container navbar__row">
+      <button class="hamburger" id="navToggle" aria-label="Open menu" aria-expanded="false" aria-controls="sideNav">
+        <span></span><span></span><span></span>
+      </button>
 
-    <a href="index.php" class="navbar__brand">WTF Lounge</a>
+      <a href="menu.php" class="navbar__brand">WTF Lounge</a>
 
-    <div class="navbar__right">
-      <div class="account-menu">
-        <a href="../logout.php">Log out</a>
+      <nav class="navbar__links">
+        <a href="menu.php" class="<?= $activeNav === 'menu' ? 'active' : '' ?>">Menu</a>
+        <a href="orders.php" class="<?= $activeNav === 'orders' ? 'active' : '' ?>">Orders</a>
+        <?php if ($admin): ?>
+          <a href="admin/index.php" class="<?= $activeNav === 'admin' ? 'active' : '' ?>">Admin</a>
+        <?php endif; ?>
+      </nav>
+
+      <div class="navbar__right">
+        <?php if ($loggedIn): ?>
+          <div class="account-menu">
+            <a href="profile.php" class="account-menu__name account-menu__profile<?= $activeNav === 'profile' ? ' active' : '' ?>" title="My profile">Hi, <?= h($_SESSION['fullname']) ?></a>
+            <span class="account-menu__divider">|</span>
+            <a href="logout.php">Log out</a>
+          </div>
+        <?php else: ?>
+          <!-- Login/Register links removed from navbar -->
+        <?php endif; ?>
+        <a href="cart.php" class="cart-icon" aria-label="View cart">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+          <span class="cart-icon__badge"><?= (int) $cartCount ?></span>
+        </a>
       </div>
     </div>
-  </div>
-</header>
+  </header>
 
-<div class="side-nav-backdrop" id="sideNavBackdrop"></div>
-<nav class="side-nav admin-side-nav" id="sideNav" aria-hidden="true">
-  <div class="side-nav__head">
-    <span class="tagline-cursive">WTF Lounge</span>
-    <button class="side-nav__close" id="navClose" aria-label="Close menu">&times;</button>
-  </div>
-  <a href="index.php" class="<?= $activeAdminNav === 'dashboard' ? 'active' : '' ?>">Dashboard</a>
-  <a href="orders.php" class="<?= $activeAdminNav === 'orders' ? 'active' : '' ?>">Orders</a>
-  <a href="users.php" class="<?= $activeAdminNav === 'users' ? 'active' : '' ?>">Users</a>
-  <a href="menu.php" class="<?= $activeAdminNav === 'menu' ? 'active' : '' ?>">Menu</a>
-  <a href="meal_options.php" class="<?= $activeAdminNav === 'meal_options' ? 'active' : '' ?>">Meal Options</a>
-  <a href="reports.php" class="<?= $activeAdminNav === 'reports' ? 'active' : '' ?>">Reports</a>
-  <hr class="side-nav__divider">
-  <div class="side-nav__account">Signed in as <?= h($_SESSION['fullname'] ?? 'Admin') ?></div>
-  <a href="profile.php" class="<?= $activeAdminNav === 'profile' ? 'active' : '' ?>">My Profile</a>
-  <a href="../menu.php">Back to Site</a>
-  <a href="../logout.php">Log out</a>
-</nav>
-
-<!-- Admin Layout -->
-<div class="admin-layout">
-
-  <!-- Admin Sidebar (desktop only) -->
-  <aside class="admin-sidebar">
-    <div class="admin-sidebar__brand">
-      <a href="index.php">WTF Lounge</a>
-      <small>Admin Panel</small>
+  <!-- Off-canvas side nav for mobile -->
+  <div class="side-nav-backdrop" id="sideNavBackdrop"></div>
+  <nav class="side-nav" id="sideNav" aria-hidden="true">
+    <div class="side-nav__head">
+      <span class="tagline-cursive">WTF Lounge</span>
+      <button class="side-nav__close" id="navClose" aria-label="Close menu">&times;</button>
     </div>
-    <nav class="admin-sidebar__nav">
+    <a href="menu.php" class="<?= $activeNav === 'menu' ? 'active' : '' ?>">Menu</a>
+    <a href="orders.php" class="<?= $activeNav === 'orders' ? 'active' : '' ?>">Orders</a>
+    <a href="cart.php" class="<?= $activeNav === 'cart' ? 'active' : '' ?>">Cart (<?= (int) $cartCount ?>)</a>
+    <?php if ($admin): ?>
+      <a href="admin/index.php" class="<?= $activeNav === 'admin' ? 'active' : '' ?>">Admin Dashboard</a>
+    <?php endif; ?>
+    <hr class="side-nav__divider">
+    <?php if ($loggedIn): ?>
+      <div class="side-nav__account">Signed in as <?= h($_SESSION['fullname']) ?></div>
+      <a href="profile.php" class="<?= $activeNav === 'profile' ? 'active' : '' ?>">My Profile</a>
+      <a href="logout.php">Log out</a>
+    <?php else: ?>
+      <a href="login.php">Log in</a>
+      <a href="register.php">Register</a>
+    <?php endif; ?>
+  </nav>
+
+  <?php if ($flash): ?>
+    <div class="container" style="padding-top:16px;">
+      <div class="flash-msg"><?= h($flash) ?></div>
+    </div>
+  <?php endif; ?>
+
+  <main class="main">
