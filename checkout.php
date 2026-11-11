@@ -3,6 +3,7 @@ require_once __DIR__ . '/includes/auth.php';
 configureSession();
 require_once __DIR__ . '/config/db.php';
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/includes/order_email.php';
 
 requireLogin();
 
@@ -23,8 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $values['fullname'] = trim($_POST['fullname'] ?? '');
     $values['address']  = trim($_POST['address'] ?? '');
     $values['mode']     = ($_POST['mode'] ?? 'Delivery') === 'Pickup' ? 'Pickup' : 'Delivery';
-    $values['payment']  = in_array($_POST['payment'] ?? '', ['Cash on Pickup', 'GCash', 'Card'], true)
-        ? $_POST['payment'] : 'Cash on Pickup';
+    // Cash is the only payment method (GCash and Card were removed).
+    $values['payment']  = 'Cash on Pickup';
     // Phone is tied to the logged-in account — not user-editable here.
     $values['phone'] = $customer['phone'] ?? '';
 
@@ -111,6 +112,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 cartClear();
                 $_SESSION['last_order_code'] = $orderCode;
+
+                // Email the order details. Failure never blocks the order (reason goes to the log).
+                sendOrderEmail($pdo, $orderCode, $customerId);
                 header('Location: confirmation.php');
                 exit;
             }
@@ -198,19 +202,9 @@ require __DIR__ . '/includes/header.php';
             </h2>
             <div class="payment-options">
               <label class="payment-option <?= $values['payment'] === 'Cash on Pickup' ? 'is-selected' : '' ?>">
-                <input type="radio" name="payment" value="Cash on Pickup" <?= $values['payment'] === 'Cash on Pickup' ? 'checked' : '' ?> style="display:none;" onchange="this.form.submit()">
+                <input type="radio" name="payment" value="Cash on Pickup" <?= $values['payment'] === 'Cash on Pickup' ? 'checked' : '' ?> style="display:none;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4"/><path d="M3 9v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9"/><path d="M3 9h18"/></svg>
                 Cash on Pickup
-              </label>
-              <label class="payment-option <?= $values['payment'] === 'GCash' ? 'is-selected' : '' ?>">
-                <input type="radio" name="payment" value="GCash" <?= $values['payment'] === 'GCash' ? 'checked' : '' ?> style="display:none;" onchange="this.form.submit()">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="12" cy="12" r="3"/></svg>
-                GCash
-              </label>
-              <label class="payment-option <?= $values['payment'] === 'Card' ? 'is-selected' : '' ?>">
-                <input type="radio" name="payment" value="Card" <?= $values['payment'] === 'Card' ? 'checked' : '' ?> style="display:none;" onchange="this.form.submit()">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
-                Card
               </label>
             </div>
           </div>
