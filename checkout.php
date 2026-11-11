@@ -15,7 +15,7 @@ $values = [
     'phone'    => $customer['phone'] ?? '',
     'address'  => $customer['address'] ?? '',
     'mode'     => 'Delivery',
-    'payment'  => 'Cash on Pickup',
+    'payment'  => 'Cash on Delivery',
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -24,8 +24,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $values['fullname'] = trim($_POST['fullname'] ?? '');
     $values['address']  = trim($_POST['address'] ?? '');
     $values['mode']     = ($_POST['mode'] ?? 'Delivery') === 'Pickup' ? 'Pickup' : 'Delivery';
-    // Cash is the only payment method (GCash and Card were removed).
-    $values['payment']  = 'Cash on Pickup';
+    // Cash is the only payment method, and it follows the mode:
+    // Delivery -> Cash on Delivery, Pickup -> Cash on Pickup.
+    $values['payment']  = $values['mode'] === 'Pickup' ? 'Cash on Pickup' : 'Cash on Delivery';
     // Phone is tied to the logged-in account — not user-editable here.
     $values['phone'] = $customer['phone'] ?? '';
 
@@ -201,10 +202,10 @@ require __DIR__ . '/includes/header.php';
               Payment Method
             </h2>
             <div class="payment-options">
-              <label class="payment-option <?= $values['payment'] === 'Cash on Pickup' ? 'is-selected' : '' ?>">
-                <input type="radio" name="payment" value="Cash on Pickup" <?= $values['payment'] === 'Cash on Pickup' ? 'checked' : '' ?> style="display:none;">
+              <label class="payment-option is-selected">
+                <input type="radio" name="payment" value="<?= h($values['payment']) ?>" checked style="display:none;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4"/><path d="M3 9v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9"/><path d="M3 9h18"/></svg>
-                Cash on Pickup
+                <?= h($values['payment']) ?>
               </label>
             </div>
           </div>
